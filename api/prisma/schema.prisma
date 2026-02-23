@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String    @id @default(uuid())
+  name      String
+  createdAt DateTime  @default(now())
+
+  sessions  Session[]
+}
+
+model Session {
+  id             String     @id @default(uuid())
+  user           User       @relation(fields: [userId], references: [id])
+  userId         String
+  startTime      DateTime   @default(now())
+  endTime        DateTime?
+  createdAt      DateTime   @default(now())
+
+  switchCount    Int        @default(0)
+  idleTime       Int        @default(0)
+  focusScore     Float      @default(0)
+  burnoutScore   Float      @default(0)
+  entropyScore Float @default(0)
+
+  deepWorkScore  Float      @default(0)   // NEW
+  isDeepWork     Boolean    @default(false) // NEW
+
+  activities     Activity[]
+
+  @@index([userId])
+  @@index([startTime])
+}
+
+model AppCategory {
+  id        String   @id @default(uuid())
+  appName   String   @unique
+  category  String   // productive | neutral | distracting
+  createdAt DateTime @default(now())
+}
+
+
+model Activity {
+  id          String   @id @default(uuid())
+  session     Session  @relation(fields: [sessionId], references: [id])
+  sessionId   String
+  appName     String
+  windowTitle String
+  category    String?  // NEW FIELD
+  timestamp   DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([timestamp])
+}
