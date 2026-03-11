@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { handleActivity } from '../services/activityService';
-
+import { getTimeline } from '../services/activityService';
+import { createActivityFromTracker } from '../services/sessionService';
 const router = Router();
 
 router.post('/', async (req, res) => {
@@ -18,5 +19,38 @@ router.post('/', async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+router.get("/timeline", async (req, res) => {
+  const { userId, date } = req.query;
 
+  if (!userId || !date) {
+    return res.status(400).json({ error: "Missing params" });
+  }
+
+  const timeline = await getTimeline(userId as string, date as string);
+  res.json(timeline);
+});
 export default router;
+router.post("/session", async (req, res) => {
+  try {
+    const { userId, app, title, startTime, endTime, duration, type } = req.body;
+
+    if (!userId || !app || !startTime || !endTime || !duration) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
+
+    const activity = await createActivityFromTracker({
+      userId,
+      app,
+      title,
+      startTime: new Date(startTime),
+      endTime: new Date(endTime),
+      duration,
+      type
+    });
+
+    res.json(activity);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
