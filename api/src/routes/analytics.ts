@@ -7,7 +7,9 @@ import {
   getDailyComparison,
   getWeeklyGrowthTrend,
   getIntentHeatmap,
-  getBurnoutRisk
+  getBurnoutRisk,
+  getGrowthTrend,
+  getDailyFocusTrend
 } from "../services/intelligenceService";
 const router = Router();
 router.get("/compare", async (req,res)=>{
@@ -55,7 +57,25 @@ router.get("/daily", async (req, res) => {
       res.status(500).json({ error: "Server error" });
     }
   });
+  router.get("/daily-focus-trend", async (req, res) => {
+
+    try {
   
+      const { userId } = req.query;
+  
+      const data = await getDailyFocusTrend(String(userId));
+  
+      res.json(data);
+  
+    } catch (err) {
+  
+      res.status(500).json({
+        error: "Daily focus trend failed"
+      });
+  
+    }
+  
+  });
   router.get("/weekly", async (req, res) => {
     const { userId } = req.query;
   
@@ -122,31 +142,19 @@ router.get("/dashboard", async (req, res) => {
   }
 
 });
-import { getTimeline } from "../services/activityService";
-router.get("/timeline", async (req, res) => {
+import { getTimeline } from "../services/timelineservice";  
+router.get("/timeline", async (req,res)=>{
 
   const { userId, date } = req.query;
 
-  if (!userId || !date) {
-    return res.status(400).json({ error: "Missing parameters" });
-  }
+  const data = await getTimeline(
+    userId as string,
+    date as string
+  );
 
-  try {
+  res.json(data);
 
-    const timeline = await getTimeline(
-      userId as string,
-      date as string
-    );
-
-    res.json(timeline);
-
-  } catch (error) {
-
-    console.error("Timeline error:", error);
-    res.status(500).json({ error: "Server error" });
-
-  }
-}); 
+});
 import { getFocusBlocks } from "../services/activityService";
 
 router.get("/focus-blocks", async (req, res) => {
@@ -282,6 +290,66 @@ router.get("/intelligence", async (req, res) => {
     res.status(500).json({
       error: "Failed to compute intelligence metrics"
     });
+
+  }
+});
+
+router.get("/growth-trend", async (req, res) => {
+  try {
+    const userId = String(req.query.userId);
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId required" });
+    }
+
+    const data = await getWeeklyGrowthTrend(userId);
+
+    res.json(data);
+
+  } catch (err) {
+
+    console.error("Growth trend error:", err);
+    res.status(500).json({ error: "Failed to fetch growth trend" });
+
+  }
+});
+router.get("/burnout-risk", async (req, res) => {
+  try {
+
+    const userId = String(req.query.userId);
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId required" });
+    }
+
+    const data = await getBurnoutRisk(userId);
+
+    res.json(data);
+
+  } catch (err) {
+
+    console.error("Burnout risk error:", err);
+    res.status(500).json({ error: "Failed to fetch burnout risk" });
+
+  }
+});
+router.get("/intent-heatmap", async (req, res) => {
+  try {
+
+    const userId = String(req.query.userId);
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId required" });
+    }
+
+    const data = await getIntentHeatmap(userId);
+
+    res.json(data);
+
+  } catch (err) {
+
+    console.error("Intent heatmap error:", err);
+    res.status(500).json({ error: "Failed to fetch intent heatmap" });
 
   }
 });

@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts"
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "seed:patterns": "ts-node src/scripts/seedPatterns.ts",
+    "gaandfaad_daroga": "ts-node src/seed.ts"
   },
   "keywords": [],
   "author": "",
@@ -13,6 +15,7 @@
   "dependencies": {
     "@prisma/client": "^6.19.2",
     "cors": "^2.8.6",
+    "dayjs": "^1.11.20",
     "express": "^5.2.1",
     "prisma": "^6.19.2"
   },

@@ -1,19 +1,27 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
-
+import { getActivityProductivityScore } from "./metricEngine";
 export async function getDailyAnalytics(userId: string) {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
 
-  const endOfDay = new Date();
-  endOfDay.setHours(23, 59, 59, 999);
+  const now = new Date();
+
+  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+
+  const istNow = new Date(now.getTime() + IST_OFFSET);
+
+  istNow.setHours(0,0,0,0);
+
+  const startOfDay = new Date(istNow.getTime() - IST_OFFSET);
+
+  const endOfDay = new Date(startOfDay);
+  endOfDay.setDate(endOfDay.getDate() + 1);
 
   const sessions = await prisma.session.findMany({
     where: {
       userId,
       startTime: {
         gte: startOfDay,
-        lte: endOfDay
+        lt: endOfDay
       }
     },
     include: {
@@ -39,42 +47,56 @@ export async function getDailyAnalytics(userId: string) {
   const appUsage: Record<string, number> = {};
 
   sessions.forEach(session => {
-    const s = session as typeof session & { burnoutScore: number; isDeepWork: boolean; entropyScore: number };
+
+    const s = session as typeof session & {
+      burnoutScore: number;
+      isDeepWork: boolean;
+      entropyScore: number;
+    };
+
     totalSwitches += session.switchCount;
     totalIdle += session.idleTime;
     totalFocusScore += session.focusScore;
     totalBurnout += s.burnoutScore;
+
     if (s.isDeepWork) {
-        deepWorkSessions++;
-      
-        if (session.endTime) {
-          const duration =
-            (new Date(session.endTime).getTime() -
-              new Date(session.startTime).getTime()) /
-            1000;
-      
-          totalDeepWorkSeconds += duration;
-        }
+
+      deepWorkSessions++;
+
+      if (session.endTime) {
+
+        const duration =
+        session.endTime.getTime() - session.startTime.getTime() / 1000;
+
+        totalDeepWorkSeconds += duration;
+
       }
-      
+
+    }
+totalEntropy += s.entropyScore;
     session.activities.forEach(activity => {
+
       const key = activity.appName;
+
       appUsage[key] = (appUsage[key] || 0) + 1;
-      totalEntropy += s.entropyScore;
+
+      
 
       if (activity.category === "productive") productiveCount++;
       if (activity.category === "distracting") distractingCount++;
       if (activity.category === "neutral") neutralCount++;
+
     });
 
     if (session.endTime) {
+
       const duration =
-        (new Date(session.endTime).getTime() -
-          new Date(session.startTime).getTime()) /
-        1000;
+      session.endTime.getTime() - session.startTime.getTime()/ 1000;
 
       totalActiveSeconds += duration;
+
     }
+
   });
 
   const averageFocus =
@@ -84,217 +106,279 @@ export async function getDailyAnalytics(userId: string) {
     totalSessions > 0 ? totalBurnout / totalSessions : 0;
 
   return {
+
     totalSessions,
+
     totalSwitches,
+
     totalIdleSeconds: totalIdle,
+
     totalActiveSeconds,
+
     averageFocusScore: Number(averageFocus.toFixed(2)),
+
     averageBurnoutScore: Number(averageBurnout.toFixed(2)),
+
     appUsage,
+
     productivityBreakdown: {
       productiveCount,
       distractingCount,
       neutralCount
     },
+
     averageEntropyScore:
-  totalSessions > 0
-    ? Number((totalEntropy / totalSessions).toFixed(2))
-    : 0,
+      totalSessions > 0
+        ? Number((totalEntropy / totalSessions).toFixed(2))
+        : 0
 
   };
+
 }
 export async function getDeepWorkStreak(userId: string) {
-    const sessions = await prisma.session.findMany({
-      where: {
-        userId,
-        isDeepWork: true
-      } as Prisma.SessionWhereInput,
-      orderBy: {
-        startTime: "asc"
-      }
-    });
-  
-    if (sessions.length === 0) {
-      return {
-        currentStreak: 0,
-        longestStreak: 0
+
+  const sessions = await prisma.session.findMany({
+    where: {
+      userId,
+      isDeepWork: true
+    },
+    orderBy: { startTime: "asc" }
+  });
+
+  if (sessions.length === 0) {
+    return { currentStreak: 0, longestStreak: 0 };
+  }
+
+  const deepWorkDays = new Set<string>();
+
+  sessions.forEach(session => {
+
+    const d = session.startTime;
+
+    const key =
+      d.getFullYear() +
+      "-" +
+      String(d.getMonth()+1).padStart(2,"0") +
+      "-" +
+      String(d.getDate()).padStart(2,"0");
+
+    deepWorkDays.add(key);
+
+  });
+
+  const sortedDays = Array.from(deepWorkDays).sort();
+
+  let longestStreak = 0;
+  let temp = 0;
+
+  for (let i = 0; i < sortedDays.length; i++) {
+
+    if (i === 0) {
+      temp = 1;
+    } else {
+
+      const prev = new Date(sortedDays[i-1]);
+      const curr = new Date(sortedDays[i]);
+
+      const diff =
+        (curr.getTime() - prev.getTime()) / (86400000);
+
+      temp = diff === 1 ? temp + 1 : 1;
+
+    }
+
+    longestStreak = Math.max(longestStreak,temp);
+
+  }
+
+  /* current streak */
+
+  const today = new Date();
+  let streak = 0;
+  let check = new Date(today);
+
+  while(true){
+
+    const key =
+      check.getFullYear() +
+      "-" +
+      String(check.getMonth()+1).padStart(2,"0") +
+      "-" +
+      String(check.getDate()).padStart(2,"0");
+
+    if(!deepWorkDays.has(key)) break;
+
+    streak++;
+    check.setDate(check.getDate()-1);
+
+  }
+
+  return {
+    currentStreak: streak,
+    longestStreak
+  };
+
+}
+export async function getWeeklyAnalytics(userId: string) {
+
+  const today = new Date();
+  today.setHours(0,0,0,0);
+
+  const startDate = new Date(today);
+  startDate.setDate(startDate.getDate() - 6);
+
+  const sessions = await prisma.session.findMany({
+    where: {
+      userId,
+      startTime: { gte: startDate }
+    }
+  });
+
+  const dailyMap: Record<string, any> = {};
+
+  sessions.forEach(session => {
+
+    const s = session as typeof session & {
+      burnoutScore: number;
+      entropyScore: number;
+      isDeepWork: boolean;
+    };
+
+    const d = session.startTime;
+
+    const dateKey =
+      d.getFullYear() + "-" +
+      String(d.getMonth()+1).padStart(2,"0") + "-" +
+      String(d.getDate()).padStart(2,"0");
+
+    if (!dailyMap[dateKey]) {
+      dailyMap[dateKey] = {
+        focusTotal: 0,
+        burnoutTotal: 0,
+        entropyTotal: 0,
+        deepWorkSeconds: 0,
+        sessionCount: 0
       };
     }
-  
-    // Group sessions by date
-    const deepWorkDays = new Set<string>();
-  
-    sessions.forEach(session => {
-      const date = new Date(session.startTime);
-      const key = date.toISOString().split("T")[0];
-      deepWorkDays.add(key);
-    });
-  
-    const sortedDays = Array.from(deepWorkDays).sort();
-  
-    let currentStreak = 0;
-    let longestStreak = 0;
-    let tempStreak = 0;
-  
-    for (let i = 0; i < sortedDays.length; i++) {
-      if (i === 0) {
-        tempStreak = 1;
-      } else {
-        const prev = new Date(sortedDays[i - 1]);
-        const curr = new Date(sortedDays[i]);
-  
-        const diff =
-          (curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24);
-  
-        if (diff === 1) {
-          tempStreak++;
-        } else {
-          tempStreak = 1;
-        }
-      }
-  
-      longestStreak = Math.max(longestStreak, tempStreak);
+
+    dailyMap[dateKey].focusTotal += session.focusScore;
+    dailyMap[dateKey].burnoutTotal += s.burnoutScore;
+    dailyMap[dateKey].entropyTotal += s.entropyScore;
+    dailyMap[dateKey].sessionCount++;
+
+    if (s.isDeepWork && session.endTime) {
+
+      const duration =
+        (session.endTime.getTime() -
+         session.startTime.getTime()) / 1000;
+
+      dailyMap[dateKey].deepWorkSeconds += duration;
+
     }
-  
-    // Compute current streak (from today backwards)
-    const today = new Date().toISOString().split("T")[0];
-    let streakCheckDate = new Date(today);
-    let streak = 0;
-  
-    while (deepWorkDays.has(streakCheckDate.toISOString().split("T")[0])) {
-      streak++;
-      streakCheckDate.setDate(streakCheckDate.getDate() - 1);
-    }
-  
-    currentStreak = streak;
-  
-    return {
-      currentStreak,
-      longestStreak
-    };
-  }
-  export async function getWeeklyAnalytics(userId: string) {
-    const today = new Date();
-    const startDate = new Date();
-    startDate.setDate(today.getDate() - 6);
-    startDate.setHours(0, 0, 0, 0);
-  
-    const sessions = await prisma.session.findMany({
-      where: {
-        userId,
-        startTime: { gte: startDate }
-      }
-    });
-  
-    const dailyMap: Record<string, any> = {};
-  
-    sessions.forEach(session => {
-      const s = session as typeof session & { burnoutScore: number; entropyScore: number; isDeepWork: boolean };
-      const dateKey = new Date(session.startTime)
-        .toISOString()
-        .split("T")[0];
-  
-      if (!dailyMap[dateKey]) {
-        dailyMap[dateKey] = {
-          focusTotal: 0,
-          burnoutTotal: 0,
-          entropyTotal: 0,
-          deepWorkSeconds: 0,
-          sessionCount: 0
+
+  });
+
+  const result = Object.entries(dailyMap).map(([date, data]) => ({
+
+    date,
+
+    averageFocus:
+      data.focusTotal / data.sessionCount,
+
+    averageBurnout:
+      data.burnoutTotal / data.sessionCount,
+
+    averageEntropy:
+      data.entropyTotal / data.sessionCount,
+
+    deepWorkSeconds: data.deepWorkSeconds
+
+  }));
+
+  return result;
+
+}
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+function getISTBucket(date: Date) {
+  const ist = new Date(date.getTime() + IST_OFFSET_MS);
+
+  return {
+    dateKey:
+      ist.getUTCFullYear() +
+      "-" +
+      String(ist.getUTCMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(ist.getUTCDate()).padStart(2, "0"),
+    hour: ist.getUTCHours()
+  };
+}
+
+function nextISTHourBoundary(date: Date) {
+  const istMs = date.getTime() + IST_OFFSET_MS;
+  const nextIstHour = Math.floor(istMs / HOUR_MS) * HOUR_MS + HOUR_MS;
+
+  return new Date(nextIstHour - IST_OFFSET_MS);
+}
+
+export async function getHeatmap(userId: string) {
+  const activities = await prisma.activity.findMany({
+    where: {
+      session: { userId },
+      duration: { gt: 0 }
+    },
+    orderBy: { startTime: "asc" }
+  });
+
+  const heatmap: Record<
+    string,
+    Record<number, { totalProductivity: number; totalMs: number }>
+  > = {};
+
+  for (const activity of activities) {
+    const score = getActivityProductivityScore(activity);
+
+    let current = new Date(activity.startTime);
+    const end =
+      activity.endTime > activity.startTime
+        ? new Date(activity.endTime)
+        : new Date(activity.startTime.getTime() + activity.duration);
+
+    while (current < end) {
+      const boundary = nextISTHourBoundary(current);
+      const segmentEnd = boundary < end ? boundary : end;
+      const segmentMs = segmentEnd.getTime() - current.getTime();
+
+      const { dateKey, hour } = getISTBucket(current);
+
+      if (!heatmap[dateKey]) heatmap[dateKey] = {};
+      if (!heatmap[dateKey][hour]) {
+        heatmap[dateKey][hour] = {
+          totalProductivity: 0,
+          totalMs: 0
         };
       }
-  
-      dailyMap[dateKey].focusTotal += session.focusScore;
-      dailyMap[dateKey].burnoutTotal += s.burnoutScore;
-      dailyMap[dateKey].entropyTotal += s.entropyScore;
-      dailyMap[dateKey].sessionCount++;
-  
-      if (s.isDeepWork && session.endTime) {
-        const duration =
-          (new Date(session.endTime).getTime() -
-            new Date(session.startTime).getTime()) / 1000;
-  
-        dailyMap[dateKey].deepWorkSeconds += duration;
-      }
-    });
-  
-    const result = Object.entries(dailyMap).map(([date, data]) => ({
-      date,
-      averageFocus: data.focusTotal / data.sessionCount,
-      averageBurnout: data.burnoutTotal / data.sessionCount,
-      averageEntropy: data.entropyTotal / data.sessionCount,
-      deepWorkSeconds: data.deepWorkSeconds
-    }));
-  
-    return result;
+
+      heatmap[dateKey][hour].totalProductivity += score * segmentMs;
+      heatmap[dateKey][hour].totalMs += segmentMs;
+
+      current = segmentEnd;
+    }
   }
-  export async function getHeatmap(userId: string) {
-    const sessions = await prisma.session.findMany({
-      where: {
-        userId,
-        endTime: { not: null }
-      }
+
+  const finalHeatmap: Record<string, Record<number, number>> = {};
+
+  Object.entries(heatmap).forEach(([date, hours]) => {
+    finalHeatmap[date] = {};
+
+    Object.entries(hours).forEach(([hour, data]) => {
+      finalHeatmap[date][Number(hour)] =
+        data.totalMs > 0
+          ? Number((data.totalProductivity / data.totalMs).toFixed(2))
+          : 0;
     });
-  
-    const heatmap: Record<string, Record<number, { totalFocus: number; totalSeconds: number }>> = {};
-  
-    sessions.forEach(session => {
-      const start = new Date(session.startTime);
-      const end = new Date(session.endTime!);
-  
-      let current = new Date(start);
-  
-      while (current < end) {
-        const hour = current.getHours();
-        const dateKey = current.toISOString().split("T")[0];
-  
-        // Calculate end of this hour
-        const hourEnd = new Date(current);
-        hourEnd.setMinutes(59, 59, 999);
-  
-        const segmentEnd = hourEnd < end ? hourEnd : end;
-  
-        const segmentSeconds =
-          (segmentEnd.getTime() - current.getTime()) / 1000;
-  
-        if (!heatmap[dateKey]) {
-          heatmap[dateKey] = {};
-        }
-  
-        if (!heatmap[dateKey][hour]) {
-          heatmap[dateKey][hour] = {
-            totalFocus: 0,
-            totalSeconds: 0
-          };
-        }
-  
-        heatmap[dateKey][hour].totalFocus +=
-          session.focusScore * segmentSeconds;
-  
-        heatmap[dateKey][hour].totalSeconds += segmentSeconds;
-  
-        current = new Date(segmentEnd.getTime() + 1);
-      }
-    });
-  
-    // Normalize final values
-    const finalHeatmap: Record<string, Record<number, number>> = {};
-  
-    Object.entries(heatmap).forEach(([date, hours]) => {
-      finalHeatmap[date] = {};
-  
-      Object.entries(hours).forEach(([hour, data]) => {
-        const avgFocus =
-          data.totalSeconds > 0
-            ? data.totalFocus / data.totalSeconds
-            : 0;
-  
-        finalHeatmap[date][Number(hour)] = Number(
-          avgFocus.toFixed(2)
-        );
-      });
-    });
-  
-    return finalHeatmap;
-  }
-  
+  });
+
+  return finalHeatmap;
+}

@@ -1,78 +1,155 @@
 import { prisma } from "../prisma";
 
-const rules = [
-  {
-    match: (app: string, title: string) =>
-      app.toLowerCase().includes("code"),
-    category: "deep_work",
-    intent: "implementation",
-    focusImpact: 0.9,
-    energyImpact: -0.2
-  },
-  {
-    match: (app: string) =>
-      app.toLowerCase().includes("chrome"),
-    category: "research",
-    intent: "browsing",
-    focusImpact: 0.6,
-    energyImpact: -0.1
-  },
-  {
-    match: (app: string) =>
-      app.toLowerCase().includes("slack") ||
-      app.toLowerCase().includes("whatsapp"),
-    category: "communication",
-    intent: "coordination",
-    focusImpact: 0.4,
-    energyImpact: -0.3
-  },
-  {
-    match: (_: string, title: string) =>
-      title.toLowerCase().includes("youtube"),
-    category: "entertainment",
-    intent: "content_consumption",
-    focusImpact: 0.1,
-    energyImpact: 0.1
-  }
-];
+export async function classifyActivity(
+  appName: string,
+  title: string
+) {
 
-export async function classifyContext(app: string, title: string) {
-  // 1. DB patterns first
-  const patterns = await prisma.appPattern.findMany({
-    where: { appName: app }
-  });
+  /* LAYER 1: STATIC RULES */
 
-  for (const pattern of patterns) {
-    const regex = new RegExp(pattern.titleRegex, "i");
-    if (regex.test(title)) {
-      return {
-        category: pattern.category,
-        intent: pattern.intent ?? "unknown",
-        focusImpact: pattern.focusImpact ?? 0.5,
-        energyImpact: pattern.energyImpact ?? 0,
-        confidence: pattern.confidence ?? 0.9
-      };
-    }
+  const pattern = await findAppPattern(appName, title);
+
+  if (pattern) return pattern;
+
+  /* LAYER 2: DOMAIN INTELLIGENCE */
+
+  const domain = extractDomain(title);
+
+  if (domain) {
+
+    const result = classifyDomain(domain);
+
+    if (result) return result;
+
   }
 
-  // 2. Rule engine fallback
-  for (const rule of rules) {
-    if (rule.match(app, title)) {
-      return {
-        category: rule.category,
-        intent: rule.intent,
-        focusImpact: rule.focusImpact,
-        energyImpact: rule.energyImpact,
-        confidence: 0.8
-      };
-    }
-  }
+  /* LAYER 3: FALLBACK */
 
   return {
-    category: "unknown",
-    intent: "unknown",
+    category: "research",
+    intent: "reading",
     focusImpact: 0.5,
     energyImpact: 0,
     confidence: 0.3
   };
+
+}
+function extractDomain(title: string) {
+
+  const domains = [
+    "github",
+    "stackoverflow",
+    "youtube",
+    "gmail",
+    "docs",
+    "notion",
+    "reddit",
+    "arxiv",
+    "medium",
+    "openai"
+  ];
+
+  for (const d of domains) {
+    if (title.toLowerCase().includes(d)) {
+      return d;
+    }
+  }
+
+  return null;
+
+}
+function classifyDomain(domain:string){
+
+  switch(domain){
+
+    case "github":
+      return {
+        category: "deep_work",
+        intent: "coding",
+        focusImpact: 0.9,
+        energyImpact: 0,
+        confidence: 0.8
+      };
+
+    case "stackoverflow":
+      return {
+        category: "research",
+        intent: "debugging",
+        focusImpact: 0.7,
+        energyImpact: 0,
+        confidence: 0.7
+      };
+
+    case "docs":
+      return {
+        category: "research",
+        intent: "documentation",
+        focusImpact: 0.7,
+        energyImpact: 0,
+        confidence: 0.7
+      };
+
+    case "youtube":
+      return {
+        category: "entertainment",
+        intent: "video",
+        focusImpact: 0.1,
+        energyImpact: 0.2,
+        confidence: 0.6
+      };
+
+    case "gmail":
+      return {
+        category: "communication",
+        intent: "email",
+        focusImpact: 0.4,
+        energyImpact: 0,
+        confidence: 0.7
+      };
+
+    default:
+      return null;
+
+  }
+
+}
+
+
+export async function findAppPattern(
+  appName: string,
+  windowTitle: string
+) {
+
+  const patterns = await prisma.appPattern.findMany({
+    where: { appName }
+  });
+
+  if (!patterns.length) return null;
+
+  for (const pattern of patterns) {
+
+    try {
+
+      const regex = new RegExp(pattern.titleRegex, "i");
+
+      if (regex.test(windowTitle)) {
+
+        return {
+          category: pattern.category,
+          intent: pattern.intent,
+          focusImpact: pattern.focusImpact,
+          energyImpact: pattern.energyImpact,
+          confidence: pattern.confidence
+        };
+
+      }
+
+    } catch (err) {
+      console.warn("Invalid regex:", pattern.titleRegex);
+    }
+
+  }
+
+  return null;
+
 }

@@ -49,7 +49,7 @@ export async function getOrCreateActiveSession(userId: string) {
 
   return session;
 }
-import { classifyContext } from "./contextClassifier";
+import { classifyActivity } from "./contextClassifier";
 export async function createActivityFromTracker(data: {
   userId: string
   app: string
@@ -62,6 +62,8 @@ export async function createActivityFromTracker(data: {
 
   const session = await getOrCreateActiveSession(data.userId)
 
+  const classification = await classifyActivity(data.app, data.title);
+
   const activity = await prisma.activity.create({
     data: {
       sessionId: session.id,
@@ -70,7 +72,12 @@ export async function createActivityFromTracker(data: {
       startTime: data.startTime,
       endTime: data.endTime,
       duration: data.duration,
-      type: data.type
+      type: data.type,
+      category: classification.category,
+      intent: classification.intent,
+      focusImpact: classification.focusImpact,
+      energyImpact: classification.energyImpact,
+      confidence: classification.confidence
     }
   })
 

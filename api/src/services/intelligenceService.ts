@@ -1,13 +1,14 @@
 import { prisma } from "../prisma";
-
+import { getISTDayRange } from "../utils/time";
+import type { Request, Response } from "express";
 export async function getAssistantInsights(userId: string) {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+
+  const { start, end } = getISTDayRange();
 
   const activities = await prisma.activity.findMany({
     where: {
       session: { userId },
-      startTime: { gte: startOfDay }
+      startTime: { gte: start, lt: end }
     }
   });
 
@@ -20,129 +21,137 @@ export async function getAssistantInsights(userId: string) {
       fragmentationScore: 0,
       energyScore: 0,
       dominantIntent: "none",
+      deepWorkSessions: 0,
+      avgFocusBlockMinutes: 0,
+      cognitiveStability: 0,
+      switchingRate: 0,
       suggestion: "No structured work recorded yet."
     };
   }
 
-  const totalDuration = activities.reduce((sum, a) => sum + a.duration, 0);
-  if (totalDuration === 0) return null;
+  const totalDuration = activities.reduce((s,a)=>s+a.duration,0);
 
-  // -------------------------
-  // Deep Work
-  // -------------------------
+  /* ---------- Deep Work ---------- */
 
-  const deepWorkDuration = activities
-    .filter(a => a.category === "deep_work")
-    .reduce((sum, a) => sum + a.duration, 0);
+  const deepActivities =
+    activities.filter(a=>a.category==="deep_work");
 
-  const deepWorkRatio = deepWorkDuration / totalDuration;
+  const deepWorkDuration =
+    deepActivities.reduce((s,a)=>s+a.duration,0);
 
-  // -------------------------
-  // Communication
-  // -------------------------
+  const deepWorkRatio =
+    deepWorkDuration / totalDuration;
 
-  const communicationDuration = activities
-    .filter(a => a.category === "communication")
-    .reduce((sum, a) => sum + a.duration, 0);
+  const deepWorkSessions = deepActivities.length;
 
-  const communicationRatio = communicationDuration / totalDuration;
+  /* ---------- Communication ---------- */
 
-  // -------------------------
-  // Focus Score
-  // -------------------------
+  const communicationDuration =
+    activities
+      .filter(a=>a.category==="communication")
+      .reduce((s,a)=>s+a.duration,0);
+
+  const communicationRatio =
+    communicationDuration / totalDuration;
+
+  /* ---------- Focus ---------- */
 
   const weightedFocus =
     activities.reduce(
-      (sum, a) => sum + (a.focusImpact ?? 0.5) * a.duration,
+      (s,a)=>s+(a.focusImpact ?? 0.5)*a.duration,
       0
     ) / totalDuration;
 
   const focusScore = weightedFocus * 100;
 
-  // -------------------------
-  // Fragmentation
-  // -------------------------
+  /* ---------- Fragmentation ---------- */
 
-  const minutes = totalDuration / (60 * 1000);
-  const contextSwitchRate =
-    minutes > 0 ? activities.length / minutes : 0;
+  const minutes = totalDuration / 60000;
 
-  const fragmentationScore = Math.min(
-    100,
-    contextSwitchRate * 100
-  );
+  const switchingRate =
+    activities.length / Math.max(minutes,1);
 
-  // -------------------------
-  // Energy
-  // -------------------------
+  const fragmentationScore =
+    Math.min(100,switchingRate * 100);
+
+  /* ---------- Energy ---------- */
 
   const weightedEnergy =
     activities.reduce(
-      (sum, a) => sum + (a.energyImpact ?? 0) * a.duration,
+      (s,a)=>s+(a.energyImpact ?? 0)*a.duration,
       0
     ) / totalDuration;
 
   const energyScore = weightedEnergy;
 
-  // -------------------------
-  // Productivity Score
-  // -------------------------
+  /* ---------- Avg Focus Block ---------- */
 
-  const productivityScore = Math.max(
-    0,
-    Math.min(
-      100,
-      focusScore * 0.5 +
+  const avgFocusBlock =
+    deepActivities.length
+      ? deepWorkDuration / deepActivities.length
+      : 0;
+
+  /* ---------- Cognitive Stability ---------- */
+
+  const cognitiveStability =
+    Math.max(0,100-fragmentationScore);
+
+  /* ---------- Productivity ---------- */
+
+  const productivityScore =
+    Math.max(
+      0,
+      Math.min(
+        100,
+        focusScore * 0.5 +
         deepWorkRatio * 100 * 0.3 -
         communicationRatio * 100 * 0.1 -
         fragmentationScore * 0.1
-    )
-  );
+      )
+    );
 
-  // -------------------------
-  // Dominant Intent
-  // -------------------------
-
-  const intentCount: Record<string, number> = {};
-  activities.forEach(a => {
-    if (!a.intent) return;
-    intentCount[a.intent] = (intentCount[a.intent] || 0) + 1;
-  });
-
-  let dominantIntent = "unknown";
-  let max = 0;
-
-  Object.entries(intentCount).forEach(([intent, count]) => {
-    if (count > max) {
-      dominantIntent = intent;
-      max = count;
-    }
-  });
-
-  // -------------------------
-  // Suggestion Engine
-  // -------------------------
-
-  const suggestion = generateAssistantSuggestion({
-    productivityScore,
-    deepWorkRatio,
-    communicationRatio,
-    fragmentationScore,
-    energyScore
-  });
+  const suggestion =
+    generateAssistantSuggestion({
+      productivityScore,
+      deepWorkRatio,
+      communicationRatio,
+      fragmentationScore,
+      energyScore
+    });
 
   return {
+
     productivityScore: Number(productivityScore.toFixed(2)),
     focusScore: Number(focusScore.toFixed(2)),
-    deepWorkRatio: Number((deepWorkRatio * 100).toFixed(2)),
-    communicationRatio: Number((communicationRatio * 100).toFixed(2)),
-    fragmentationScore: Number(fragmentationScore.toFixed(2)),
-    energyScore: Number(energyScore.toFixed(2)),
-    dominantIntent,
-    suggestion
-  };
-}
 
+    deepWorkRatio:
+      Number((deepWorkRatio*100).toFixed(2)),
+
+    communicationRatio:
+      Number((communicationRatio*100).toFixed(2)),
+
+    fragmentationScore:
+      Number(fragmentationScore.toFixed(2)),
+
+    energyScore:
+      Number(energyScore.toFixed(2)),
+
+    deepWorkSessions,
+
+    avgFocusBlockMinutes:
+      Math.round(avgFocusBlock/60000),
+
+    switchingRate:
+      Number(switchingRate.toFixed(2)),
+
+    cognitiveStability:
+      Number(cognitiveStability.toFixed(2)),
+
+    suggestion
+
+  };
+
+}
 function generateAssistantSuggestion(metrics: {
   productivityScore: number;
   deepWorkRatio: number;
@@ -168,20 +177,30 @@ function generateAssistantSuggestion(metrics: {
 
   return "Work pattern stable. Maintain structure.";
 }
+
+
 export async function getDailyComparison(userId: string) {
 
-  const todayStart = new Date();
-  todayStart.setHours(0,0,0,0);
+  /* ---------- IST DAY RANGES ---------- */
 
-  const yesterdayStart = new Date(todayStart);
-  yesterdayStart.setDate(todayStart.getDate() - 1);
+  const todayRange =
+    getISTDayRange(new Date());
 
-  const yesterdayEnd = new Date(todayStart);
+  const yesterdayDate = new Date();
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+
+  const yesterdayRange =
+    getISTDayRange(yesterdayDate);
+
+  /* ---------- FETCH ACTIVITIES ---------- */
 
   const todayActivities = await prisma.activity.findMany({
     where:{
       session:{ userId },
-      startTime:{ gte: todayStart }
+      startTime:{
+        gte: todayRange.start,
+        lt: todayRange.end
+      }
     }
   });
 
@@ -189,92 +208,209 @@ export async function getDailyComparison(userId: string) {
     where:{
       session:{ userId },
       startTime:{
-        gte: yesterdayStart,
-        lt: yesterdayEnd
+        gte: yesterdayRange.start,
+        lt: yesterdayRange.end
       }
     }
   });
 
-  function computeScore(activities:any[]){
-    if(activities.length === 0) return 0;
+  /* ---------- METRIC ENGINE ---------- */
 
-    const totalDuration = activities.reduce((s,a)=>s+a.duration,0);
+  function computeMetrics(activities:any[]){
+
+    if(activities.length === 0)
+      return {
+        focus:0,
+        deepWork:0,
+        communication:0,
+        fragmentation:0
+      };
+
+    const totalDuration =
+      activities.reduce((s,a)=>s+a.duration,0);
+
+    if(totalDuration === 0){
+      return {
+        focus:0,
+        deepWork:0,
+        communication:0,
+        fragmentation:0
+      };
+    }
 
     const weightedFocus =
       activities.reduce(
-        (s,a)=>s+(a.focusImpact ?? 0.5)*a.duration,0
+        (s,a)=>s+(a.focusImpact ?? 0.5)*a.duration,
+        0
       ) / totalDuration;
 
-    return weightedFocus * 100;
+    const deepWork =
+      activities
+        .filter(a=>a.category==="deep_work")
+        .reduce((s,a)=>s+a.duration,0) / totalDuration;
+
+    const communication =
+      activities
+        .filter(a=>a.category==="communication")
+        .reduce((s,a)=>s+a.duration,0) / totalDuration;
+
+    const minutes =
+      totalDuration / 60000;
+
+    const fragmentation =
+      minutes > 0
+        ? activities.length / minutes
+        : 0;
+
+    return {
+      focus: weightedFocus * 100,
+      deepWork,
+      communication,
+      fragmentation
+    };
+
   }
 
-  const todayScore = computeScore(todayActivities);
-  const yesterdayScore = computeScore(yesterdayActivities);
+  const today = computeMetrics(todayActivities);
+  const yesterday = computeMetrics(yesterdayActivities);
 
-  const delta = todayScore - yesterdayScore;
+  const change = today.focus - yesterday.focus;
+
+  const reason =
+    generateFocusReason(today,yesterday);
 
   return {
-    todayFocusScore: Number(todayScore.toFixed(2)),
-    yesterdayFocusScore: Number(yesterdayScore.toFixed(2)),
-    change: Number(delta.toFixed(2))
-  };
-}
 
+    todayFocusScore:
+      Number(today.focus.toFixed(2)),
+
+    yesterdayFocusScore:
+      Number(yesterday.focus.toFixed(2)),
+
+    change:
+      Number(change.toFixed(2)),
+
+    reason
+
+  };
+
+}
+function generateFocusReason(today:any,yesterday:any){
+
+  const insights:string[] = [];
+
+  if(today.deepWork > yesterday.deepWork + 0.1)
+    insights.push("longer deep-work blocks");
+
+  if(today.communication > yesterday.communication + 0.1)
+    insights.push("increased communication load");
+
+  if(today.fragmentation > yesterday.fragmentation + 0.2)
+    insights.push("higher task switching");
+
+  if(today.deepWork < yesterday.deepWork - 0.1)
+    insights.push("reduced deep-work time");
+
+  if(insights.length === 0)
+    return "Work pattern remained similar to yesterday.";
+
+  return insights.join(" and ");
+
+}
 export async function getWeeklyGrowthTrend(userId:string){
 
-  const now = new Date();
   const start = new Date();
-  start.setDate(now.getDate() - 7);
+  start.setDate(start.getDate()-7);
 
   const sessions = await prisma.session.findMany({
     where:{
       userId,
       startTime:{ gte:start }
-    },
-    orderBy:{ startTime:"asc" }
-  });
-
-  if(sessions.length === 0){
-    return { growth:0 };
-  }
-
-  const scores = sessions.map(s => s.focusScore ?? 0);
-
-  const first = scores[0];
-  const last = scores[scores.length-1];
-
-  const growth = last - first;
-
-  return {
-    weeklyFocusGrowth: Number(growth.toFixed(2))
-  };
-}
-
-export async function getIntentHeatmap(userId:string){
-
-  const activities = await prisma.activity.findMany({
-    where:{
-      session:{ userId }
     }
   });
 
-  const map:Record<string,number> = {};
+  const dayMap:Record<string,{focus:number,count:number,entropy:number}> = {};
 
-  activities.forEach(a=>{
-    const intent = a.intent ?? "unknown";
-    map[intent] = (map[intent] || 0) + a.duration;
+  sessions.forEach(s=>{
+
+    const day =
+      s.startTime.toISOString().split("T")[0];
+
+    if(!dayMap[day]){
+      dayMap[day] = {
+        focus:0,
+        entropy:0,
+        count:0
+      };
+    }
+
+    dayMap[day].focus += s.focusScore;
+    dayMap[day].entropy += s.entropyScore;
+    dayMap[day].count++;
+
   });
 
-  const total = Object.values(map).reduce((s,v)=>s+v,0);
+  const trend = Object.entries(dayMap).map(([date,d])=>({
 
-  const heatmap = Object.entries(map).map(([intent,duration])=>({
-    intent,
-    percentage: Number(((duration/total)*100).toFixed(2))
+    date,
+
+    focus:
+      d.focus/d.count,
+
+    entropy:
+      d.entropy/d.count
+
   }));
 
-  heatmap.sort((a,b)=>b.percentage-a.percentage);
+  trend.sort((a,b)=>
+    new Date(a.date).getTime()
+    -
+    new Date(b.date).getTime()
+  );
 
-  return heatmap;
+  return trend;
+
+}
+export async function getIntentHeatmap(userId:string){
+
+  const activities = await prisma.activity.findMany({
+    where:{ session:{ userId } }
+  });
+
+  const map:Record<string,{
+    duration:number
+    focus:number
+  }> = {};
+
+  activities.forEach(a=>{
+
+    const intent = a.intent ?? "unknown";
+
+    if(!map[intent]){
+      map[intent] = { duration:0, focus:0 };
+    }
+
+    map[intent].duration += a.duration;
+    map[intent].focus += (a.focusImpact ?? 0.5)*a.duration;
+
+  });
+
+  const total =
+    Object.values(map)
+      .reduce((s,v)=>s+v.duration,0);
+
+  return Object.entries(map).map(([intent,data])=>({
+
+    intent,
+
+    percentage:
+      Number(((data.duration/total)*100).toFixed(2)),
+
+    avgFocus:
+      Number((data.focus/data.duration*100).toFixed(2))
+
+  }));
+
 }
 
 export async function getBurnoutRisk(userId:string){
@@ -285,23 +421,159 @@ export async function getBurnoutRisk(userId:string){
     take:10
   });
 
-  if(sessions.length === 0){
+  if(sessions.length===0){
     return { burnoutRisk:"low" };
   }
 
   const avgBurnout =
-    sessions.reduce((s,a)=>s+(a.burnoutScore ?? 0),0)
-    / sessions.length;
+    sessions.reduce(
+      (s,a)=>s+(a.burnoutScore ?? 0),
+      0
+    )/sessions.length;
 
-  let risk = "low";
+  const avgEntropy =
+    sessions.reduce(
+      (s,a)=>s+(a.entropyScore ?? 0),
+      0
+    )/sessions.length;
 
-  if(avgBurnout > 60) risk = "high";
-  else if(avgBurnout > 35) risk = "moderate";
+  const avgDuration =
+    sessions.reduce(
+      (s,a)=>s+(a.totalDuration ?? 0),
+      0
+    )/sessions.length;
+
+  let risk="low";
+
+  if(avgBurnout>60) risk="high";
+  else if(avgBurnout>35) risk="moderate";
+
+  const recommendation =
+    risk==="high"
+      ? "Reduce session length and introduce recovery breaks."
+      : risk==="moderate"
+      ? "Monitor workload and avoid late night work."
+      : "Workload appears sustainable.";
 
   return {
-    burnoutRisk: risk,
-    burnoutScore: Number(avgBurnout.toFixed(2))
+
+    burnoutRisk:risk,
+
+    burnoutScore:
+      Number(avgBurnout.toFixed(2)),
+
+    entropyLoad:
+      Number(avgEntropy.toFixed(2)),
+
+    avgSessionMinutes:
+      Math.round(avgDuration/60000),
+
+    recommendation
+
   };
+
+}
+import {
+  clamp,
+  getBaseFocus,
+  isIdleActivity
+} from "./metricEngine";
+
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+function getISTHour(date: Date) {
+  const istMs = date.getTime() + IST_OFFSET_MS;
+  return new Date(istMs).getUTCHours();
+}
+
+function nextISTHourBoundary(date: Date) {
+  const istMs = date.getTime() + IST_OFFSET_MS;
+  const nextIstHour =
+    Math.floor(istMs / HOUR_MS) * HOUR_MS + HOUR_MS;
+
+  return new Date(nextIstHour - IST_OFFSET_MS);
+}
+
+export async function getDailyFocusTrend(
+  userId: string,
+  date?: string
+) {
+  const targetDate =
+    date ? new Date(date + "T00:00:00") : new Date();
+
+  const { start, end } = getISTDayRange(targetDate);
+
+  const activities = await prisma.activity.findMany({
+    where: {
+      session: { userId },
+      startTime: {
+        gte: start,
+        lt: end
+      },
+      duration: {
+        gt: 0
+      }
+    },
+    orderBy: {
+      startTime: "asc"
+    }
+  });
+
+  const hours: Record<number, {
+    focus: number;
+    duration: number;
+  }> = {};
+
+  for (let i = 0; i < 24; i++) {
+    hours[i] = {
+      focus: 0,
+      duration: 0
+    };
+  }
+
+  for (const activity of activities) {
+    const impact = isIdleActivity(activity)
+      ? 0
+      : getBaseFocus(activity);
+
+    let current = new Date(activity.startTime);
+
+    const activityEnd =
+      activity.endTime > activity.startTime
+        ? new Date(activity.endTime)
+        : new Date(activity.startTime.getTime() + activity.duration);
+
+    while (current < activityEnd) {
+      const boundary = nextISTHourBoundary(current);
+      const segmentEnd =
+        boundary < activityEnd ? boundary : activityEnd;
+
+      const segmentMs =
+        segmentEnd.getTime() - current.getTime();
+
+      if (segmentMs <= 0) break;
+
+      const hour = getISTHour(current);
+
+      hours[hour].focus += impact * segmentMs;
+      hours[hour].duration += segmentMs;
+
+      current = segmentEnd;
+    }
+  }
+
+  return Object.entries(hours).map(([hour, data]) => {
+    const avg =
+      data.duration > 0
+        ? (data.focus / data.duration) * 100
+        : 0;
+
+    return {
+      hour: Number(hour),
+      focus: Number(clamp(avg).toFixed(2))
+    };
+  });
 }
 export async function getWeeklyInsights(userId: string) {
 
@@ -406,7 +678,11 @@ export async function getDashboard(userId: string) {
     growth,
     intents,
     burnout,
-    streak
+    streak,
+    meta:{
+      generatedAt:new Date(),
+      system:"samaritan-intelligence"
+    }
   };
 }
 export async function getDeepWorkStreak(userId: string) {
@@ -460,9 +736,8 @@ export async function getDeepWorkStreak(userId: string) {
 }
 export async function getDailySummary(userId: string, date: string) {
 
-  const start = new Date(date);
-  const end = new Date(date);
-  end.setDate(end.getDate() + 1);
+  const { start, end } =
+    getISTDayRange(new Date(date + "T00:00:00"));
 
   const activities = await prisma.activity.findMany({
     where: {
@@ -535,4 +810,45 @@ export async function getDailySummary(userId: string, date: string) {
     dominantIntent: topIntent
 
   };
+}
+import dayjs from "dayjs";
+export async function getGrowthTrend(req: Request, res: Response) {
+
+  const { userId } = req.query;
+
+  try {
+
+    const activities = await prisma.activity.findMany({
+      where: {
+        session: { userId: String(userId) }
+      }
+    });
+
+    const result: any = {};
+
+    activities.forEach((a) => {
+
+      const day = dayjs(a.startTime).format("YYYY-MM-DD");
+
+      if (!result[day]) {
+        result[day] = 0;
+      }
+
+      result[day] += a.duration;
+
+    });
+
+    const trend = Object.entries(result).map(([date, value]) => ({
+      date,
+      duration: value
+    }));
+
+    res.json(trend);
+
+  } catch (err) {
+
+    res.status(500).json({ error: "Growth trend failed" });
+
+  }
+
 }

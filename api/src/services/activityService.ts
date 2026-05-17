@@ -1,47 +1,70 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { getOrCreateActiveSession } from "./sessionService";
+import { classifyActivity } from "./contextClassifier";
+import { getISTDayRange } from "../utils/time";
+import {
+  clamp,
+  clamp01,
+  getBaseFocus,
+  getActivityProductivityScore,
+  isIdleActivity
+} from "./metricEngine";
+const IDLE_THRESHOLD_MS = 60 * 1000;
 
-const IDLE_THRESHOLD_MS = 60 * 1000; // 1 minute (for testing)
-
-import { classifyContext } from "./contextClassifier";
+/* -------------------------------------------------------------------------- */
+/*                                  ACTIVITY                                  */
+/* -------------------------------------------------------------------------- */
 
 export async function handleActivity(
   userId: string,
   appName: string,
   windowTitle: string,
-  startTime: Date,
-  endTime: Date,
-  duration: number,
-  type: string
+  startTime?: Date,
+  endTime?: Date,
+  duration?: number,
+  type?: string
 ) {
+
   const session = await getOrCreateActiveSession(userId);
 
-  //const classification = await classifyContext(appName, windowTitle);
+  const classification = await classifyActivity(appName, windowTitle);
+
+  const effectiveStart = startTime ?? new Date();
+  const effectiveEnd = endTime ?? new Date();
+  const effectiveDuration = duration ?? 0;
+  const effectiveType = type ?? "active";
 
   const activity = await prisma.activity.create({
     data: {
       sessionId: session.id,
       appName,
       windowTitle,
-      startTime,
-      endTime,
-      duration,
-      type,
-  
-      category: "unknown",
-      intent: "unknown",
-      focusImpact: 0.5,
-      energyImpact: 0,
-      confidence: 0
+      startTime: effectiveStart,
+      endTime: effectiveEnd,
+      duration: effectiveDuration,
+      type: effectiveType,
+      category: classification.category,
+      intent: classification.intent,
+      focusImpact: classification.focusImpact,
+      energyImpact: classification.energyImpact,
+      confidence: classification.confidence
     }
   });
+
   await recalculateSessionMetrics(session.id);
 
   return activity;
-}
-export async function recalculateSessionMetrics(sessionId: string) {
 
+}
+
+/* -------------------------------------------------------------------------- */
+/*                            SESSION METRIC ENGINE                           */
+/* -------------------------------------------------------------------------- */
+
+
+
+export async function recalculateSessionMetrics(sessionId: string) {
   const activities = await prisma.activity.findMany({
     where: { sessionId },
     orderBy: { startTime: "asc" }
@@ -55,123 +78,118 @@ export async function recalculateSessionMetrics(sessionId: string) {
 
   if (!session) return;
 
-  const totalDuration = activities.reduce(
-    (sum, a) => sum + a.duration,
+  const normalizedActivities = activities
+    .map(a => ({
+      ...a,
+      durationMs: Math.max(0, a.duration ?? 0)
+    }))
+    .filter(a => a.durationMs > 0);
+
+  const totalDuration = normalizedActivities.reduce(
+    (sum, a) => sum + a.durationMs,
     0
   );
 
   if (totalDuration === 0) return;
 
-  // -----------------------------
-  // 1️⃣ Focus Score
-  // -----------------------------
+  const activeActivities = normalizedActivities.filter(
+    a => !isIdleActivity(a)
+  );
+
+  const activeDuration = activeActivities.reduce(
+    (sum, a) => sum + a.durationMs,
+    0
+  );
+
+  const idleDuration = totalDuration - activeDuration;
 
   const weightedFocus =
-    activities.reduce(
-      (sum, a) =>
-        sum + (a.focusImpact ?? 0.5) * a.duration,
-      0
-    ) / totalDuration;
+    normalizedActivities.reduce((sum, a) => {
+      const impact = isIdleActivity(a) ? 0 : getBaseFocus(a);
+      return sum + impact * a.durationMs;
+    }, 0) / totalDuration;
 
-  const focusScore = weightedFocus * 100;
+  const focusScore = clamp(weightedFocus * 100);
 
-  // -----------------------------
-  // 2️⃣ Deep Work Score
-  // -----------------------------
-
-  const deepWorkDuration = activities
+  const deepWorkDuration = activeActivities
     .filter(a => a.category === "deep_work")
-    .reduce((sum, a) => sum + a.duration, 0);
+    .reduce((sum, a) => sum + a.durationMs, 0);
 
   const deepWorkScore =
-    (deepWorkDuration / totalDuration) * 100;
-
-  // -----------------------------
-  // 3️⃣ Context Switch Count
-  // -----------------------------
-
-  let switchCount = 0;
-
-  for (let i = 1; i < activities.length; i++) {
-
-    const prev = activities[i - 1];
-    const curr = activities[i];
-
-    const switched =
-      prev.appName !== curr.appName ||
-      prev.windowTitle !== curr.windowTitle;
-
-    if (switched) switchCount++;
-
-  }
-
-  // -----------------------------
-  // 4️⃣ Entropy Score
-  // -----------------------------
-
-  const appCounts: Record<string, number> = {};
-
-  activities.forEach(a => {
-    appCounts[a.appName] =
-      (appCounts[a.appName] || 0) + 1;
-  });
-
-  const total = activities.length;
-
-  let entropy = 0;
-
-  Object.values(appCounts).forEach(count => {
-
-    const p = count / total;
-
-    entropy -= p * Math.log2(p);
-
-  });
-
-  const maxEntropy =
-    Math.log2(Object.keys(appCounts).length || 1);
-
-  const entropyScore =
-    maxEntropy > 0
-      ? (entropy / maxEntropy) * 100
+    activeDuration > 0
+      ? clamp((deepWorkDuration / activeDuration) * 100)
       : 0;
 
-  // -----------------------------
-  // 5️⃣ Burnout Score
-  // -----------------------------
+  const isDeepWork =
+    deepWorkDuration >= 10 * 60 * 1000 || deepWorkScore >= 50;
 
-  const sessionDurationSeconds =
-    totalDuration / 1000;
+  const productivityScore = clamp(
+    normalizedActivities.reduce(
+      (sum, a) =>
+        sum + getActivityProductivityScore(a) * a.durationMs,
+      0
+    ) / totalDuration
+  );
 
-  const communicationDuration = activities
+  let switchCount = 0;
+  let previousContext: string | null = null;
+
+  for (const activity of activeActivities) {
+    const context = `${activity.appName}::${activity.windowTitle ?? ""}`;
+
+    if (previousContext && previousContext !== context) {
+      switchCount++;
+    }
+
+    previousContext = context;
+  }
+
+  const appDurations: Record<string, number> = {};
+
+  activeActivities.forEach(a => {
+    appDurations[a.appName] =
+      (appDurations[a.appName] || 0) + a.durationMs;
+  });
+
+  const appCount = Object.keys(appDurations).length;
+
+  let entropyScore = 0;
+
+  if (activeDuration > 0 && appCount > 1) {
+    let entropy = 0;
+
+    Object.values(appDurations).forEach(duration => {
+      const p = duration / activeDuration;
+      entropy -= p * Math.log2(p);
+    });
+
+    const maxEntropy = Math.log2(appCount);
+    entropyScore = clamp((entropy / maxEntropy) * 100);
+  }
+
+  const activeDurationSeconds = activeDuration / 1000;
+  const activeHours = activeDurationSeconds / 3600;
+
+  const communicationDuration = activeActivities
     .filter(a => a.category === "communication")
-    .reduce((sum, a) => sum + a.duration, 0);
+    .reduce((sum, a) => sum + a.durationMs, 0);
 
   const communicationRatio =
-    communicationDuration / totalDuration;
+    activeDuration > 0 ? communicationDuration / activeDuration : 0;
 
-  const durationFactor =
-    sessionDurationSeconds / 14400; // 4h
+  const switchesPerHour =
+    activeHours > 0 ? switchCount / activeHours : 0;
 
-  const switchFactor =
-    switchCount / 50;
+  const durationFactor = clamp01(activeDurationSeconds / 14400);
+  const switchFactor = clamp01(switchesPerHour / 20);
+  const entropyFactor = entropyScore / 100;
 
-  const entropyFactor =
-    entropyScore / 100;
-
-  let burnoutScore =
-    (durationFactor +
-      switchFactor +
-      entropyFactor +
-      communicationRatio) *
-    25;
-
-  burnoutScore =
-    Math.min(100, Math.max(0, burnoutScore));
-
-  // -----------------------------
-  // Update Session
-  // -----------------------------
+  const burnoutScore = clamp(
+    durationFactor * 35 +
+    switchFactor * 25 +
+    entropyFactor * 20 +
+    communicationRatio * 20
+  );
 
   await prisma.session.update({
     where: { id: sessionId },
@@ -180,62 +198,87 @@ export async function recalculateSessionMetrics(sessionId: string) {
       deepWorkScore,
       burnoutScore,
       entropyScore,
-      switchCount
+      switchCount,
+      idleTime: idleDuration,
+      totalDuration,
+      productivityScore,
+      isDeepWork
     }
   });
-
 }
+/* -------------------------------------------------------------------------- */
+/*                              TIMELINE ENGINE                               */
+/* -------------------------------------------------------------------------- */
+
 function compressTimeline(activities: any[]) {
 
-  if (activities.length === 0) return [];
+  if (!activities.length) return [];
 
-  const timeline = [];
+  const groups: Record<string, any[]> = {};
 
-  let current = {
-    app: activities[0].appName,
-    title: activities[0].windowTitle,
-    category: activities[0].category,
-    start: activities[0].startTime,
-    end: activities[0].endTime,
-    duration: activities[0].duration
-  };
+  for (const a of activities) {
 
-  for (let i = 1; i < activities.length; i++) {
-
-    const a = activities[i];
-
-    const sameContext =
-      a.appName === current.app &&
-      a.windowTitle === current.title;
-
-    if (sameContext) {
-      current.end = a.endTime;
-      current.duration += a.duration;
-    } else {
-
-      timeline.push(current);
-
-      current = {
-        app: a.appName,
-        title: a.windowTitle,
-        category: a.category,
-        start: a.startTime,
-        end: a.endTime,
-        duration: a.duration
-      };
-
+    if (!groups[a.appName]) {
+      groups[a.appName] = [];
     }
+
+    groups[a.appName].push(a);
+
   }
 
-  timeline.push(current);
+  const timeline: any[] = [];
+
+  for (const appName of Object.keys(groups)) {
+
+    const group = groups[appName];
+
+    let start = group[0].startTime;
+    let end = group[0].endTime;
+    let duration = 0;
+    const category = group[0].category;
+
+    const items: Record<string, number> = {};
+
+    for (const a of group) {
+
+      duration += a.duration;
+
+      if (a.startTime < start)
+        start = a.startTime;
+
+      if (a.endTime > end)
+        end = a.endTime;
+
+      items[a.windowTitle] =
+        (items[a.windowTitle] || 0) + a.duration;
+
+    }
+
+    timeline.push({
+      appName,
+      category,
+      start,
+      end,
+      duration,
+      items: Object.entries(items)
+        .map(([title,duration])=>({title,duration}))
+        .sort((a,b)=>b.duration-a.duration)
+    });
+
+  }
 
   return timeline;
+
 }
+
+/* -------------------------------------------------------------------------- */
+/*                                TIMELINE API                                */
+/* -------------------------------------------------------------------------- */
+
 export async function getTimeline(userId: string, date: string) {
 
-  const start = new Date(date);
-  const end = new Date(date);
-  end.setDate(end.getDate() + 1);
+  const { start, end } =
+    getISTDayRange(new Date(date + "T00:00:00"));
 
   const activities = await prisma.activity.findMany({
     where: {
@@ -249,12 +292,17 @@ export async function getTimeline(userId: string, date: string) {
   });
 
   return compressTimeline(activities);
+
 }
+
+/* -------------------------------------------------------------------------- */
+/*                              DEEP WORK BLOCKS                              */
+/* -------------------------------------------------------------------------- */
+
 export async function getFocusBlocks(userId: string, date: string) {
 
-  const start = new Date(date);
-  const end = new Date(date);
-  end.setDate(end.getDate() + 1);
+  const { start, end } =
+    getISTDayRange(new Date(date + "T00:00:00"));
 
   const activities = await prisma.activity.findMany({
     where: {
@@ -270,9 +318,10 @@ export async function getFocusBlocks(userId: string, date: string) {
   return detectFocusBlocks(activities);
 
 }
+
 function detectFocusBlocks(activities: any[]) {
 
-  const MIN_BLOCK_DURATION = 10 * 60 * 1000; // 10 minutes
+  const MIN_BLOCK_DURATION = 10 * 60 * 1000;
 
   const blocks: any[] = [];
 
@@ -280,16 +329,25 @@ function detectFocusBlocks(activities: any[]) {
 
   for (const activity of activities) {
 
-    const isDeepWork = activity.category === "deep_work";
+    const isDeepWork =
+      activity.category === "deep_work";
 
     if (!isDeepWork) {
 
       if (currentBlock) {
-        finalizeBlock(currentBlock, blocks, MIN_BLOCK_DURATION);
+
+        finalizeBlock(
+          currentBlock,
+          blocks,
+          MIN_BLOCK_DURATION
+        );
+
         currentBlock = null;
+
       }
 
       continue;
+
     }
 
     if (!currentBlock) {
@@ -310,13 +368,24 @@ function detectFocusBlocks(activities: any[]) {
   }
 
   if (currentBlock) {
-    finalizeBlock(currentBlock, blocks, MIN_BLOCK_DURATION);
+
+    finalizeBlock(
+      currentBlock,
+      blocks,
+      MIN_BLOCK_DURATION
+    );
+
   }
 
   return blocks;
 
 }
-function finalizeBlock(block: any, blocks: any[], minDuration: number) {
+
+function finalizeBlock(
+  block: any,
+  blocks: any[],
+  minDuration: number
+) {
 
   if (block.duration >= minDuration) {
 

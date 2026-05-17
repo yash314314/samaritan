@@ -1,130 +1,183 @@
 const activeWin = require("active-win");
 const { handleEvent, closeSession } = require("./sessionEngine");
-const { powerMonitor } = require("electron");
-const USER_ID = "11111111-1111-1111-1111-111111111111";
-const BACKEND_URL = "http://localhost:4000/activity/session";
-const idleThreshold = 150; // seconds (testing)
+const { powerMonitor, app } = require("electron");
 
-let isIdle = false;
+const USER_ID = "7007b337-6f7b-4d6a-86f9-dc4da4ed48c4";
+
+const idleThreshold = 5; // seconds
+const SAMPLE_INTERVAL = 2000; // 2 seconds
+
+/* ---------------- ICON CACHE ---------------- */
+
+const iconCache = new Map();
+
+async function getCachedIcon(path) {
+
+  if (!path) return null;
+
+  if (iconCache.has(path)) {
+    return iconCache.get(path);
+  }
+
+  try {
+
+    const iconImage = await app.getFileIcon(path);
+
+    if (!iconImage || iconImage.isEmpty()) {
+      return null;
+    }
+
+    const resized = iconImage.resize({ width: 32, height: 32 });
+
+    const base64 = resized.toDataURL();
+
+    iconCache.set(path, base64);
+
+    return base64;
+
+  } catch (err) {
+
+    console.log("[Samaritan] Icon extraction failed:", path);
+
+    return null;
+
+  }
+
+}
+
+/* ---------------- STATE ---------------- */
+
 let lastContext = null;
-let reportedNoWindow = false;
-let idleStart = null; // Timestamp of last idle event
+let isIdle = false;
+let idleStart = null;
+let trackingRunning = false;
+
+/* ---------------- CONTEXT HASH ---------------- */
+
+function contextKey(win) {
+
+  return `${win.owner?.name}|${win.title}|${win.owner?.processId}`;
+
+}
+
+/* ---------------- TRACK LOOP ---------------- */
 
 async function track() {
+
+  if (trackingRunning) return;
+  trackingRunning = true;
+
   try {
+
     const idleTime = powerMonitor.getSystemIdleTime();
 
-    // ---- IDLE DETECTION ----
+    /* ---------- IDLE DETECTION ---------- */
+
     if (idleTime >= idleThreshold) {
 
       if (!isIdle) {
     
-        idleStart = Date.now() - (idleTime * 1000);
+        idleStart = Date.now() - idleTime * 1000;
     
-        console.log(
-          "[Samaritan] Administrator absence detected.",
-          "\n  Idle threshold reached:",
-          idleThreshold,
-          "seconds"
-        );
+        console.log("[Samaritan] Idle detected.");
     
-        await closeSession("idle");
+        // close active session
+        await closeSession("active");
+    
+        // start idle session
+        await handleEvent({
+          app: "System Idle",
+          title: "User inactive",
+          icon: null,
+          type: "idle"
+        });
     
         isIdle = true;
+    
       }
     
+      trackingRunning = false;
       return;
     }
 
-    // ---- USER RETURNS FROM IDLE ----
+    /* ---------- USER RETURNS ---------- */
+
     if (isIdle && idleTime < idleThreshold) {
 
-      const idleEnd = Date.now();
+      console.log("[Samaritan] User returned.");
     
-      const idleDuration = idleEnd - idleStart;
-    
-      console.log(
-        "[Samaritan] Administrator presence restored.",
-        "\n  Idle duration (seconds):",
-        Math.floor(idleDuration / 1000)
-      );
-    
-      await sendIdleToBackend(idleStart, idleEnd, idleDuration);
+      // close idle session
+      await closeSession("idle");
     
       isIdle = false;
       idleStart = null;
+    
     }
+
+    /* ---------- GET ACTIVE WINDOW ---------- */
 
     const win = await activeWin();
 
     if (!win) {
-      if (!reportedNoWindow) {
-        console.log("[Samaritan] No active window detected.");
-        reportedNoWindow = true;
-      }
+      trackingRunning = false;
       return;
     }
 
-    reportedNoWindow = false;
+    const newKey = contextKey(win);
 
-    const currentContext = {
-      app: win.owner?.name || "Unknown",
-      title: win.title || "Untitled",
-      processId: win.owner?.processId,
-      path: win.owner?.path
-    };
+    /* ---------- NO CHANGE ---------- */
 
-    // ---- CONTEXT SWITCH DETECTION ----
-    const isContextChanged =
-      !lastContext ||
-      lastContext.app !== currentContext.app ||
-      lastContext.title !== currentContext.title;
-
-    if (isContextChanged) {
-      if (lastContext) {
-        console.log(
-          "[Samaritan] Context shift detected.",
-          "\n  Previous App:", lastContext.app,
-          "\n  Previous Title:", lastContext.title,
-          "\n  Current App:", currentContext.app,
-          "\n  Current Title:", currentContext.title,
-          "\n  PID:", currentContext.processId,
-          "\n  Executable:", currentContext.path
-        );
-      } else {
-        console.log(
-          "[Samaritan] Initial context acquired.",
-          "\n  App:", currentContext.app,
-          "\n  Title:", currentContext.title,
-          "\n  PID:", currentContext.processId,
-          "\n  Executable:", currentContext.path
-        );
-      }
-
-      await handleEvent(currentContext);
-      lastContext = currentContext;
+    if (lastContext && lastContext.key === newKey) {
+      trackingRunning = false;
+      return;
     }
 
-  } catch (err) {
-    console.error(
-      "[Samaritan] Tracking anomaly detected.",
-      "\n  Error:", err.message
+    /* ---------- CONTEXT CHANGE ---------- */
+
+    const path = win.owner?.path || null;
+
+    const icon = path
+      ? await getCachedIcon(path)
+      : null;
+
+    const currentContext = {
+      key: newKey,
+      app: win.owner?.name || "Unknown",
+      title: win.title || "Untitled",
+      processId: win.owner?.processId || null,
+      path,
+    };
+
+    console.log(
+      "[Samaritan] Context shift detected.",
+      "\n  Previous:", lastContext?.app || "None",
+      "\n  Current:", currentContext.app
     );
+
+    await handleEvent(currentContext);
+
+    lastContext = currentContext;
+
+  } catch (err) {
+
+    console.error("[Samaritan] Tracker error:", err.message);
+
   }
+
+  trackingRunning = false;
+
 }
+
+/* ---------------- START TRACKING ---------------- */
 
 function startTracking() {
 
   console.log("[Samaritan] Surveillance initialized.");
-  console.log("[Samaritan] Idle threshold:", idleThreshold, "seconds");
+  console.log("[Samaritan] Sampling interval:", SAMPLE_INTERVAL, "ms");
 
   powerMonitor.on("lock-screen", async () => {
-    console.log("[Samaritan] System lock detected.");
+    console.log("[Samaritan] System locked.");
     await closeSession("lock");
-  });
-
-  powerMonitor.on("unlock-screen", () => {
-    console.log("[Samaritan] System unlock detected.");
   });
 
   powerMonitor.on("suspend", async () => {
@@ -136,27 +189,8 @@ function startTracking() {
     console.log("[Samaritan] System resumed.");
   });
 
-  setInterval(track, 1000);
-}
-async function sendIdleToBackend(start, end, duration) {
-
-  const payload = {
-
-    userId: USER_ID,
-    app: "System",
-    title: "Idle",
-    startTime: new Date(start).toISOString(),
-    endTime: new Date(end).toISOString(),
-    duration,
-    type: "idle"
-
-  };
-
-  await fetch(BACKEND_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+  setInterval(track, SAMPLE_INTERVAL);
 
 }
+
 module.exports = { startTracking };

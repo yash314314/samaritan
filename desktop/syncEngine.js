@@ -11,7 +11,8 @@ const CLOUD_API = "http://localhost:4000";
 async function sync() {
   const sessions = store.get("sessions") || [];
   if (sessions.length === 0) return;
-
+   //console.log("session: ", sessions);
+   console.log("device", deviceId);
   try {
     await axios.post(`${CLOUD_API}/sync/sessions`, {
       sessions: sessions.map(session => ({
@@ -28,7 +29,7 @@ async function sync() {
 }
 
 function startSyncLoop() {
-  setInterval(sync, 60 * 1000);
+  setInterval(sync, 4 * 1000);
 }
 
 module.exports = { startSyncLoop };

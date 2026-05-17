@@ -1,20 +1,9 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-
-
-
-
-
-
 async function main() {
-  const user = await prisma.user.create({
-    data: {
-      name: "CRYO gen"
-    }
-  });
-  console.log("Created user:", user);
+
   console.log("Seeding Samaritan classifier patterns...");
 
   await prisma.appPattern.deleteMany();
@@ -72,6 +61,7 @@ async function main() {
         category: "deep_work",
         intent: "geophysics",
         focusImpact: 0.9,
+
         confidence: 0.9
       },
 
@@ -90,7 +80,17 @@ async function main() {
         category: "deep_work",
         intent: "thinking",
         focusImpact: 0.85,
+        energyImpact: -0.05,
         confidence: 0.9
+      },
+      {
+        appName: "Codex",
+        titleRegex: ".*",
+        category: "deep_work",
+        intent: "thinking",
+        focusImpact: 0.95,
+        energyImpact: -0.1,
+        confidence: 0.95
       },
 
       /* ------------------------------
@@ -178,6 +178,24 @@ async function main() {
       ------------------------------ */
 
       {
+        appName: "Brave Browser",
+        titleRegex: ".*(Instagram|instagram\\.com).*",
+        category: "communication",
+        intent: "social_media",
+        focusImpact: 0.3,
+        energyImpact: -0.08,
+        confidence: 0.92
+      },
+      {
+        appName: "Avast Secure Browser",
+        titleRegex: ".*(Instagram|instagram\\.com).*",
+        category: "communication",
+        intent: "social_media",
+        focusImpact: 0.3,
+        energyImpact: -0.08,
+        confidence: 0.92
+      },
+      {
         appName: "Discord",
         titleRegex: ".*",
         category: "communication",
@@ -186,7 +204,6 @@ async function main() {
         energyImpact: -0.05,
         confidence: 0.9
       },
-       
       {
         appName: "WhatsApp",
         titleRegex: ".*",
@@ -202,9 +219,9 @@ async function main() {
         category: "communication",
         intent: "chat",
         focusImpact: 0.4,
+        energyImpact: -0.05,
         confidence: 0.9
       },
-
       {
         appName: "Remote Desktop Connection",
         titleRegex: ".*",
@@ -226,16 +243,55 @@ async function main() {
         focusImpact: 0.2,
         confidence: 0.9
       },
-
+      
       {
         appName: "Spotify",
         titleRegex: ".*",
-        category: "media",
+        category: "entertainment",
         intent: "music",
         focusImpact: 0.3,
         confidence: 0.9
       },
-
+      
+      {
+        appName: "Microsoft Edge",
+        titleRegex: ".*(Netflix|netflix\\.com).*",
+        category: "entertainment",
+        intent: "streaming_video",
+        focusImpact: 0.15,
+        energyImpact: 0.05,
+        confidence: 0.95
+      },
+      
+      {
+        appName: "Brave Browser",
+        titleRegex: ".*(Netflix|netflix\\.com).*",
+        category: "entertainment",
+        intent: "streaming_video",
+        focusImpact: 0.15,
+        energyImpact: 0.05,
+        confidence: 0.95
+      },
+      
+      {
+        appName: "Microsoft Edge",
+        titleRegex: ".*(movie|movies|watch|stream|episode|series).*",
+        category: "entertainment",
+        intent: "video_streaming",
+        focusImpact: 0.15,
+        energyImpact: 0.05,
+        confidence: 0.7
+      },
+      
+      {
+        appName: "Brave Browser",
+        titleRegex: ".*(movie|movies|watch|stream|episode|series).*",
+        category: "entertainment",
+        intent: "video_streaming",
+        focusImpact: 0.15,
+        energyImpact: 0.05,
+        confidence: 0.7
+      },
       /* ------------------------------
       ENTERTAINMENT / GAMING
       ------------------------------ */
@@ -364,7 +420,16 @@ async function main() {
         intent: "media_processing",
         focusImpact: 0.3,
         confidence: 0.8
-      }
+      },
+      {
+        appName: "System Idle",
+        titleRegex: ".*",
+        category: "system",
+        intent: "idle",
+        focusImpact: 0,
+        energyImpact: 0.1,
+        confidence: 1
+      },
 
     ]
   });
@@ -380,4 +445,3 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-

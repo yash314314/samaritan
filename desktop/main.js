@@ -29,5 +29,5 @@ app.whenReady().then(() => {
   console.log("Samaritan is watching you...");
     createWindow();
     startTracking();
-    startSyncLoop();
+    
 });
