@@ -290,7 +290,13 @@ export async function getTimeline(userId: string, date: string) {
     },
     orderBy: { startTime: "asc" }
   });
-
+  console.log("[Timeline Fetch]", {
+    userId,
+    date,
+    start,
+    end,
+    count: activities.length
+  });
   return compressTimeline(activities);
 
 }

@@ -32,7 +32,7 @@ router.get("/timeline", async (req, res) => {
 export default router;
 router.post("/session", async (req, res) => {
   try {
-    const { userId, app, title, startTime, endTime, duration, type } = req.body;
+    const { userId, app, title, startTime, endTime, duration, type, url, domain } = req.body;
 
     if (!userId || !app || !startTime || !endTime || !duration) {
       return res.status(400).json({ error: "Missing fields" });
@@ -45,7 +45,9 @@ router.post("/session", async (req, res) => {
       startTime: new Date(startTime),
       endTime: new Date(endTime),
       duration,
-      type
+      type,
+      url,
+      domain
     });
 
     res.json(activity);

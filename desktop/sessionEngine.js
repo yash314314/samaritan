@@ -13,10 +13,12 @@ function now() {
 /* ---------------- START SESSION ---------------- */
 
 function startNewSession(event) {
-
+ const startTime = event.startTime
+    ? new Date(event.startTime).getTime()
+    : now();
   currentSession = {
-    startTime: now(),
-    endTime: now(),
+    startTime,
+    endTime: startTime,
     app: event.app,
     title: event.title,
     icon: event.icon || null,
@@ -40,6 +42,7 @@ async function sendSessionToBackend(session) {
     userId: USER_ID,
     app: session.app,
     title: session.title,
+    iconUrl: session.icon ,
     startTime: new Date(session.startTime).toISOString(),
     endTime: new Date(session.endTime).toISOString(),
     duration: session.duration,
@@ -86,31 +89,24 @@ async function sendSessionToBackend(session) {
 
 /* ---------------- CLOSE SESSION ---------------- */
 
-async function closeSession(reason = "active") {
-
+async function closeSession(reason = "active", endTimeOverride = null) {
   if (!currentSession) {
     console.log("[Samaritan] No active observation to close.");
     return;
   }
 
-  const endTime = now();
+  const endTime = endTimeOverride
+    ? new Date(endTimeOverride).getTime()
+    : now();
 
-  currentSession.endTime = endTime;
-  currentSession.type = reason;
+  currentSession.endTime = Math.max(endTime, currentSession.startTime);
 
-  const duration = endTime - currentSession.startTime;
+  const duration =
+    currentSession.endTime - currentSession.startTime;
 
   if (duration < MIN_SESSION_DURATION) {
-
-    console.log(
-      "[Samaritan] Observation discarded.",
-      "\n  Reason: Duration too brief.",
-      "\n  Duration(ms):", duration
-    );
-
     currentSession = null;
     return;
-
   }
 
   currentSession.duration = duration;
@@ -118,21 +114,22 @@ async function closeSession(reason = "active") {
   console.log(
     "[Samaritan] Observation concluded.",
     "\n  App:", currentSession.app,
+    "\n  Type:", currentSession.type,
     "\n  Duration(ms):", duration,
-    "\n  Reason:", reason,
-    "\n  Started:", new Date(currentSession.startTime).toISOString(),
-    "\n  Ended:", new Date(currentSession.endTime).toISOString()
+    "\n  Reason:", reason
   );
 
   await sendSessionToBackend(currentSession);
 
   currentSession = null;
-
 }
 
 /* ---------------- EVENT HANDLER ---------------- */
 
 async function handleEvent(event) {
+  const eventStartTime = event.startTime
+    ? new Date(event.startTime).getTime()
+    : now();
 
   if (!currentSession) {
     startNewSession(event);
@@ -141,26 +138,15 @@ async function handleEvent(event) {
 
   const isSameContext =
     currentSession.app === event.app &&
-    currentSession.title === event.title;
+    currentSession.title === event.title &&
+    currentSession.type === (event.type || "active");
 
   if (!isSameContext) {
-
-    console.log(
-      "[Samaritan] Context shift detected.",
-      "\n  Previous:", currentSession.app,
-      "\n  Current:", event.app
-    );
-
-    await closeSession("switch");
-
+    await closeSession("switch", eventStartTime);
     startNewSession(event);
-
   } else {
-
     currentSession.endTime = now();
-
   }
-
 }
 
 /* ---------------- SHUTDOWN HANDLER ---------------- */

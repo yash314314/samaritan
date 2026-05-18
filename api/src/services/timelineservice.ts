@@ -26,7 +26,13 @@ export async function getTimeline(userId: string, date: string) {
   /* ---------- MERGE ---------- */
 
   const merged = mergeActivities(activities);
-
+  console.log("[Timeline Fetch]", {
+    userId,
+    date,
+    start,
+    end,
+    count: activities.length
+  });
   return merged;
 
 }
@@ -49,6 +55,9 @@ function mergeActivities(activities: any[]) {
 
       current = {
         appName: a.appName,
+        iconUrl: a.iconUrl,
+        domain: a.domain,
+        url: a.url,
         start: a.startTime,
         end: a.endTime,
         duration: a.duration,
@@ -90,6 +99,9 @@ function mergeActivities(activities: any[]) {
 
       current = {
         appName: a.appName,
+        iconUrl: a.iconUrl,
+        domain: a.domain,
+        url: a.url,
         start: a.startTime,
         end: a.endTime,
         duration: a.duration,

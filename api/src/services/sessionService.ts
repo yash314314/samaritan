@@ -1,8 +1,8 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { recalculateSessionMetrics } from "./activityService"
 const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-const MAX_SESSION_DURATION = 2 * 60 * 60 * 1000;
-
+const MAX_SESSION_DURATION = 2 * 60 * 60 * 1000;  
 export async function getOrCreateActiveSession(userId: string) {
 
   const now = new Date();
@@ -50,10 +50,14 @@ export async function getOrCreateActiveSession(userId: string) {
   return session;
 }
 import { classifyActivity } from "./contextClassifier";
+import { resolveActivityIcon } from "./iconResolver";
 export async function createActivityFromTracker(data: {
   userId: string
   app: string
   title: string
+  iconUrl?: string | null
+  domain?: string | null
+  url?: string | null
   startTime: Date
   endTime: Date
   duration: number
@@ -63,7 +67,11 @@ export async function createActivityFromTracker(data: {
   const session = await getOrCreateActiveSession(data.userId)
 
   const classification = await classifyActivity(data.app, data.title);
-
+  const icon = resolveActivityIcon({
+    appName: data.app,
+    url: data.url,
+    domain: data.domain
+  });
   const activity = await prisma.activity.create({
     data: {
       sessionId: session.id,
@@ -77,12 +85,23 @@ export async function createActivityFromTracker(data: {
       intent: classification.intent,
       focusImpact: classification.focusImpact,
       energyImpact: classification.energyImpact,
-      confidence: classification.confidence
+      confidence: classification.confidence,
+      iconUrl: icon.iconUrl,
+      domain: icon.domain,
+      url: data.url ?? null
     }
   })
 
   // 🔴 THIS WAS MISSING
   await recalculateSessionMetrics(session.id)
+  console.log("[Activity Created]", {
+    id: activity.id,
+    sessionId: activity.sessionId,
+    appName: activity.appName,
+    startTime: activity.startTime,
+    duration: activity.duration,
+    type: activity.type
+  });
 
   return activity
 }

@@ -60,11 +60,15 @@ model Activity {
   duration        Int
   type            String?
 
-  category        String?     // deep_work, communication, etc
-  intent          String?     // debugging, coordination, etc
-  focusImpact     Float?      // 0–1
-  energyImpact    Float?      // -1 to 1
+  category        String?
+  intent          String?
+  focusImpact     Float?
+  energyImpact    Float?
   confidence      Float?
+
+  iconUrl         String?
+  domain          String?
+  url             String?
 
   @@index([sessionId])
   @@index([startTime])

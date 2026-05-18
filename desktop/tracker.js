@@ -4,7 +4,7 @@ const { powerMonitor, app } = require("electron");
 
 const USER_ID = "7007b337-6f7b-4d6a-86f9-dc4da4ed48c4";
 
-const idleThreshold = 5; // seconds
+const idleThreshold = 120; // seconds
 const SAMPLE_INTERVAL = 2000; // 2 seconds
 
 /* ---------------- ICON CACHE ---------------- */
@@ -51,7 +51,38 @@ let lastContext = null;
 let isIdle = false;
 let idleStart = null;
 let trackingRunning = false;
+async function enterIdle(reason, startedAt) {
+  if (isIdle) return;
 
+  await closeSession(`${reason}-start`, startedAt);
+
+  await handleEvent({
+    app: "System Idle",
+    title:
+      reason === "suspend"
+        ? "System suspended"
+        : reason === "lock"
+        ? "System locked"
+        : "User inactive",
+    icon: null,
+    type: "idle",
+    startTime: startedAt
+  });
+
+  isIdle = true;
+  idleStart = startedAt;
+  lastContext = null;
+}
+
+async function exitIdle(reason, endedAt = Date.now()) {
+  if (!isIdle) return;
+
+  await closeSession(`${reason}-end`, endedAt);
+
+  isIdle = false;
+  idleStart = null;
+  lastContext = null;
+}
 /* ---------------- CONTEXT HASH ---------------- */
 
 function contextKey(win) {
@@ -74,44 +105,20 @@ async function track() {
     /* ---------- IDLE DETECTION ---------- */
 
     if (idleTime >= idleThreshold) {
-
+      const detectedIdleStart = Date.now() - idleTime * 1000;
+    
       if (!isIdle) {
-    
-        idleStart = Date.now() - idleTime * 1000;
-    
         console.log("[Samaritan] Idle detected.");
-    
-        // close active session
-        await closeSession("active");
-    
-        // start idle session
-        await handleEvent({
-          app: "System Idle",
-          title: "User inactive",
-          icon: null,
-          type: "idle"
-        });
-    
-        isIdle = true;
-    
+        await enterIdle("idle", detectedIdleStart);
       }
     
       trackingRunning = false;
       return;
     }
-
-    /* ---------- USER RETURNS ---------- */
-
+    
     if (isIdle && idleTime < idleThreshold) {
-
       console.log("[Samaritan] User returned.");
-    
-      // close idle session
-      await closeSession("idle");
-    
-      isIdle = false;
-      idleStart = null;
-    
+      await exitIdle("return");
     }
 
     /* ---------- GET ACTIVE WINDOW ---------- */
@@ -144,6 +151,7 @@ async function track() {
       key: newKey,
       app: win.owner?.name || "Unknown",
       title: win.title || "Untitled",
+      icon: icon,
       processId: win.owner?.processId || null,
       path,
     };
@@ -177,18 +185,23 @@ function startTracking() {
 
   powerMonitor.on("lock-screen", async () => {
     console.log("[Samaritan] System locked.");
-    await closeSession("lock");
+    await enterIdle("lock", Date.now());
   });
-
+  
+  powerMonitor.on("unlock-screen", async () => {
+    console.log("[Samaritan] System unlocked.");
+    await exitIdle("unlock", Date.now());
+  });
+  
   powerMonitor.on("suspend", async () => {
     console.log("[Samaritan] System suspended.");
-    await closeSession("suspend");
+    await enterIdle("suspend", Date.now());
   });
-
-  powerMonitor.on("resume", () => {
+  
+  powerMonitor.on("resume", async () => {
     console.log("[Samaritan] System resumed.");
+    await exitIdle("resume", Date.now());
   });
-
   setInterval(track, SAMPLE_INTERVAL);
 
 }
