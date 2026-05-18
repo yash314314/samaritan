@@ -72,6 +72,18 @@ export async function createActivityFromTracker(data: {
     url: data.url,
     domain: data.domain
   });
+  const normalizedApp = data.app.toLowerCase();
+
+const shouldPreferResolvedIcon =
+  normalizedApp.includes("brave") ||
+  normalizedApp.includes("edge") ||
+  normalizedApp.includes("chrome") ||
+  normalizedApp.includes("firefox") ||
+  normalizedApp.includes("whatsapp");
+
+const finalIconUrl = shouldPreferResolvedIcon
+  ? icon.iconUrl ?? data.iconUrl ?? null
+  : data.iconUrl ?? icon.iconUrl ?? null;
   const activity = await prisma.activity.create({
     data: {
       sessionId: session.id,
@@ -86,13 +98,12 @@ export async function createActivityFromTracker(data: {
       focusImpact: classification.focusImpact,
       energyImpact: classification.energyImpact,
       confidence: classification.confidence,
-      iconUrl: icon.iconUrl,
-      domain: icon.domain,
+      iconUrl: finalIconUrl,
+      domain: data.domain ?? icon.domain,
       url: data.url ?? null
     }
   })
 
-  // 🔴 THIS WAS MISSING
   await recalculateSessionMetrics(session.id)
   console.log("[Activity Created]", {
     id: activity.id,

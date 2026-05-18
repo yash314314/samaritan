@@ -1,24 +1,19 @@
 export function getISTDayRange(date?: Date) {
-
   const base = date ? new Date(date) : new Date();
 
   const IST_OFFSET = 5.5 * 60 * 60 * 1000;
 
-  // convert to IST
   const ist = new Date(base.getTime() + IST_OFFSET);
 
-  // start of IST day
-  const startIST = new Date(ist);
-  startIST.setHours(0,0,0,0);
+  const year = ist.getUTCFullYear();
+  const month = ist.getUTCMonth();
+  const day = ist.getUTCDate();
 
-  // end of IST day
-  const endIST = new Date(startIST);
-  endIST.setDate(endIST.getDate() + 1);
+  const start = new Date(
+    Date.UTC(year, month, day, 0, 0, 0, 0) - IST_OFFSET
+  );
 
-  // convert back to UTC
-  const start = new Date(startIST.getTime() - IST_OFFSET);
-  const end = new Date(endIST.getTime() - IST_OFFSET);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
 
   return { start, end };
-
 }

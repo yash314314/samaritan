@@ -480,37 +480,40 @@ import {
 } from "./metricEngine";
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-function getISTHour(date: Date) {
-  const istMs = date.getTime() + IST_OFFSET_MS;
-  return new Date(istMs).getUTCHours();
-}
+function getISTParts(date: Date) {
+  const ist = new Date(date.getTime() + IST_OFFSET_MS);
 
-function nextISTHourBoundary(date: Date) {
-  const istMs = date.getTime() + IST_OFFSET_MS;
-  const nextIstHour =
-    Math.floor(istMs / HOUR_MS) * HOUR_MS + HOUR_MS;
-
-  return new Date(nextIstHour - IST_OFFSET_MS);
+  return {
+    hour: ist.getUTCHours(),
+    minute: ist.getUTCMinutes()
+  };
 }
 
 export async function getDailyFocusTrend(
   userId: string,
-  date?: string
+  date?: string,
+  bucketMinutes = 60
 ) {
   const targetDate =
     date ? new Date(date + "T00:00:00") : new Date();
 
   const { start, end } = getISTDayRange(targetDate);
+  const safeBucketMinutes =
+    Number.isFinite(bucketMinutes)
+      ? Math.min(60, Math.max(1, Math.floor(bucketMinutes)))
+      : 60;
+
+  const bucketMs = safeBucketMinutes * MINUTE_MS;
+  const bucketCount = Math.ceil(DAY_MS / bucketMs);
 
   const activities = await prisma.activity.findMany({
     where: {
       session: { userId },
-      startTime: {
-        gte: start,
-        lt: end
-      },
+      startTime: { lt: end },
+      endTime: { gt: start },
       duration: {
         gt: 0
       }
@@ -520,57 +523,80 @@ export async function getDailyFocusTrend(
     }
   });
 
-  const hours: Record<number, {
-    focus: number;
-    duration: number;
-  }> = {};
+  const buckets = Array.from({ length: bucketCount }, (_, index) => {
+    const bucketStart = new Date(start.getTime() + index * bucketMs);
+    const bucketEnd = new Date(
+      Math.min(bucketStart.getTime() + bucketMs, end.getTime())
+    );
+    const { hour, minute } = getISTParts(bucketStart);
 
-  for (let i = 0; i < 24; i++) {
-    hours[i] = {
+    return {
+      index,
+      hour,
+      minute,
+      label:
+        `${String(hour).padStart(2, "0")}:` +
+        `${String(minute).padStart(2, "0")}`,
+      start: bucketStart,
+      end: bucketEnd,
       focus: 0,
       duration: 0
     };
-  }
+  });
 
   for (const activity of activities) {
     const impact = isIdleActivity(activity)
       ? 0
       : getBaseFocus(activity);
 
-    let current = new Date(activity.startTime);
-
-    const activityEnd =
+    const activityStart = new Date(activity.startTime).getTime();
+    const recordedEnd =
       activity.endTime > activity.startTime
-        ? new Date(activity.endTime)
-        : new Date(activity.startTime.getTime() + activity.duration);
+        ? new Date(activity.endTime).getTime()
+        : activityStart + activity.duration;
 
-    while (current < activityEnd) {
-      const boundary = nextISTHourBoundary(current);
-      const segmentEnd =
-        boundary < activityEnd ? boundary : activityEnd;
+    let currentMs = Math.max(activityStart, start.getTime());
+    const activityEndMs = Math.min(recordedEnd, end.getTime());
 
-      const segmentMs =
-        segmentEnd.getTime() - current.getTime();
+    while (currentMs < activityEndMs) {
+      const bucketIndex = Math.floor(
+        (currentMs - start.getTime()) / bucketMs
+      );
+
+      const bucket = buckets[bucketIndex];
+
+      if (!bucket) break;
+
+      const segmentEndMs = Math.min(
+        bucket.end.getTime(),
+        activityEndMs
+      );
+
+      const segmentMs = segmentEndMs - currentMs;
 
       if (segmentMs <= 0) break;
 
-      const hour = getISTHour(current);
+      bucket.focus += impact * segmentMs;
+      bucket.duration += segmentMs;
 
-      hours[hour].focus += impact * segmentMs;
-      hours[hour].duration += segmentMs;
-
-      current = segmentEnd;
+      currentMs = segmentEndMs;
     }
   }
 
-  return Object.entries(hours).map(([hour, data]) => {
+  return buckets.map(bucket => {
     const avg =
-      data.duration > 0
-        ? (data.focus / data.duration) * 100
+      bucket.duration > 0
+        ? (bucket.focus / bucket.duration) * 100
         : 0;
 
     return {
-      hour: Number(hour),
+      index: bucket.index,
+      hour: bucket.hour,
+      minute: bucket.minute,
+      label: bucket.label,
+      start: bucket.start,
+      end: bucket.end,
+      duration: bucket.duration,
       focus: Number(clamp(avg).toFixed(2))
     };
   });

@@ -16,15 +16,16 @@ function startNewSession(event) {
  const startTime = event.startTime
     ? new Date(event.startTime).getTime()
     : now();
-  currentSession = {
-    startTime,
-    endTime: startTime,
-    app: event.app,
-    title: event.title,
-    icon: event.icon || null,
-    type: event.type || "active"
-  };
-
+    currentSession = {
+      startTime,
+      endTime: startTime,
+      app: event.app,
+      title: event.title,
+      icon: event.icon || null,
+      url: event.url || null,
+      domain: event.domain || null,
+      type: event.type || "active"
+    };
   console.log(
     "[Samaritan] New observation initiated.",
     "\n  App:", event.app,
@@ -42,7 +43,9 @@ async function sendSessionToBackend(session) {
     userId: USER_ID,
     app: session.app,
     title: session.title,
-    iconUrl: session.icon ,
+    iconUrl: session.icon,
+    url: session.url || null,
+    domain: session.domain || null,
     startTime: new Date(session.startTime).toISOString(),
     endTime: new Date(session.endTime).toISOString(),
     duration: session.duration,

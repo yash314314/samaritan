@@ -26,12 +26,34 @@ export async function getTimeline(userId: string, date: string) {
   /* ---------- MERGE ---------- */
 
   const merged = mergeActivities(activities);
+
+  const latestRaw = activities[activities.length - 1];
+  const latestMerged = merged[merged.length - 1];
+  const latestMergedItem = latestMerged?.items?.[latestMerged.items.length - 1];
+
   console.log("[Timeline Fetch]", {
     userId,
     date,
-    start,
-    end,
-    count: activities.length
+    rawCount: activities.length,
+    mergedCount: merged.length,
+    latestRaw: latestRaw
+      ? {
+          appName: latestRaw.appName,
+          title: latestRaw.windowTitle,
+          start: latestRaw.startTime,
+          end: latestRaw.endTime,
+          duration: latestRaw.duration
+        }
+      : null,
+    latestMerged: latestMerged
+      ? {
+          appName: latestMerged.appName,
+          title: latestMergedItem?.title,
+          start: latestMerged.start,
+          end: latestMerged.end,
+          duration: latestMerged.duration
+        }
+      : null
   });
   return merged;
 
@@ -65,6 +87,9 @@ function mergeActivities(activities: any[]) {
         items: [
           {
             title: a.windowTitle,
+            iconUrl: a.iconUrl,
+            domain: a.domain,
+            url: a.url,
             start: a.startTime,
             end: a.endTime,
             duration: a.duration
@@ -81,9 +106,15 @@ function mergeActivities(activities: any[]) {
 
       current.end = a.endTime;
       current.duration += a.duration;
+      current.iconUrl = current.iconUrl ?? a.iconUrl;
+      current.domain = current.domain ?? a.domain;
+      current.url = current.url ?? a.url;
 
       current.items.push({
         title: a.windowTitle,
+        iconUrl: a.iconUrl,
+        domain: a.domain,
+        url: a.url,
         start: a.startTime,
         end: a.endTime,
         duration: a.duration
@@ -109,6 +140,9 @@ function mergeActivities(activities: any[]) {
         items: [
           {
             title: a.windowTitle,
+            iconUrl: a.iconUrl,
+            domain: a.domain,
+            url: a.url,
             start: a.startTime,
             end: a.endTime,
             duration: a.duration

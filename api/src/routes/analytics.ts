@@ -61,9 +61,17 @@ router.get("/daily", async (req, res) => {
 
     try {
   
-      const { userId } = req.query;
+      const { userId, date, bucketMinutes } = req.query;
+
+      if (!userId || typeof userId !== "string") {
+        return res.status(400).json({ error: "Missing userId" });
+      }
   
-      const data = await getDailyFocusTrend(String(userId));
+      const data = await getDailyFocusTrend(
+        userId,
+        typeof date === "string" ? date : undefined,
+        bucketMinutes ? Number(bucketMinutes) : 60
+      );
   
       res.json(data);
   
@@ -189,7 +197,6 @@ router.get("/daily-summary", async (req,res)=>{
   );
 
   res.json(summary);
-
 });
 router.get("/intelligence", async (req, res) => {
   const { userId } = req.query;

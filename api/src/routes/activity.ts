@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { handleActivity } from '../services/activityService';
-import { getTimeline } from '../services/activityService';
+import { getTimeline } from '../services/timelineservice';
 import { createActivityFromTracker } from '../services/sessionService';
 const router = Router();
 
@@ -29,10 +29,21 @@ router.get("/timeline", async (req, res) => {
   const timeline = await getTimeline(userId as string, date as string);
   res.json(timeline);
 });
-export default router;
+
 router.post("/session", async (req, res) => {
   try {
-    const { userId, app, title, startTime, endTime, duration, type, url, domain } = req.body;
+    const {
+      userId,
+      app,
+      title,
+      iconUrl,
+      startTime,
+      endTime,
+      duration,
+      type,
+      url,
+      domain
+    } = req.body;
 
     if (!userId || !app || !startTime || !endTime || !duration) {
       return res.status(400).json({ error: "Missing fields" });
@@ -42,6 +53,7 @@ router.post("/session", async (req, res) => {
       userId,
       app,
       title,
+      iconUrl,
       startTime: new Date(startTime),
       endTime: new Date(endTime),
       duration,
@@ -56,3 +68,5 @@ router.post("/session", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+export default router;

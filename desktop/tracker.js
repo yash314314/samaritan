@@ -1,7 +1,7 @@
 const activeWin = require("active-win");
 const { handleEvent, closeSession } = require("./sessionEngine");
 const { powerMonitor, app } = require("electron");
-
+const { resolveBrowserContext } = require("./browserUrlResolver");
 const USER_ID = "7007b337-6f7b-4d6a-86f9-dc4da4ed48c4";
 
 const idleThreshold = 120; // seconds
@@ -146,15 +146,21 @@ async function track() {
     const icon = path
       ? await getCachedIcon(path)
       : null;
-
-    const currentContext = {
-      key: newKey,
-      app: win.owner?.name || "Unknown",
-      title: win.title || "Untitled",
-      icon: icon,
-      processId: win.owner?.processId || null,
-      path,
-    };
+      const browserContext = await resolveBrowserContext({
+        appName: win.owner?.name || "Unknown",
+        title: win.title || "Untitled"
+      });
+      const currentContext = {
+        key: newKey,
+        app: win.owner?.name || "Unknown",
+        title: win.title || "Untitled",
+        icon,
+        url: browserContext.url,
+        domain: browserContext.domain,
+        processId: win.owner?.processId || null,
+        path,
+        type: "active"
+      };
 
     console.log(
       "[Samaritan] Context shift detected.",
