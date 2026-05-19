@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { recalculateSessionMetrics } from "./activityService"
+import { evaluateDeepWorkActivity } from "./deepWorkService";
 const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_SESSION_DURATION = 2 * 60 * 60 * 1000;  
 export async function getOrCreateActiveSession(userId: string) {
@@ -105,6 +106,20 @@ const finalIconUrl = shouldPreferResolvedIcon
   })
 
   await recalculateSessionMetrics(session.id)
+  const focusIntervention = await evaluateDeepWorkActivity(
+    data.userId,
+    activity
+  );
+
+  if (focusIntervention) {
+    console.log("[Strict Focus Intervention]", {
+      sessionId: focusIntervention.sessionId,
+      action: focusIntervention.intervention.action,
+      appName: focusIntervention.intervention.appName,
+      domain: focusIntervention.intervention.domain,
+      message: focusIntervention.message
+    });
+  }
   console.log("[Activity Created]", {
     id: activity.id,
     sessionId: activity.sessionId,
@@ -114,5 +129,8 @@ const finalIconUrl = shouldPreferResolvedIcon
     type: activity.type
   });
 
-  return activity
+  return {
+    activity,
+    focusIntervention
+  }
 }

@@ -1,6 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
-import { getActivityProductivityScore } from "./metricEngine";
+import {
+  getActivityProductivityScore,
+  isIdleActivity
+} from "./metricEngine";
 export async function getDailyAnalytics(userId: string) {
 
   const now = new Date();
@@ -333,7 +336,17 @@ export async function getHeatmap(userId: string) {
 
   const heatmap: Record<
     string,
-    Record<number, { totalProductivity: number; totalMs: number }>
+    Record<
+      number,
+      {
+        totalProductivity: number;
+        totalMs: number;
+        idleMs: number;
+        appDurations: Record<string, number>;
+        categoryDurations: Record<string, number>;
+        intentDurations: Record<string, number>;
+      }
+    >
   > = {};
 
   for (const activity of activities) {
@@ -356,27 +369,87 @@ export async function getHeatmap(userId: string) {
       if (!heatmap[dateKey][hour]) {
         heatmap[dateKey][hour] = {
           totalProductivity: 0,
-          totalMs: 0
+          totalMs: 0,
+          idleMs: 0,
+          appDurations: {},
+          categoryDurations: {},
+          intentDurations: {}
         };
       }
 
-      heatmap[dateKey][hour].totalProductivity += score * segmentMs;
-      heatmap[dateKey][hour].totalMs += segmentMs;
+      const bucket = heatmap[dateKey][hour];
+      const appName = activity.appName ?? "Unknown";
+      const category = activity.category ?? "unknown";
+      const intent = activity.intent ?? "unknown";
+
+      bucket.totalProductivity += score * segmentMs;
+      bucket.totalMs += segmentMs;
+
+      if (isIdleActivity(activity)) {
+        bucket.idleMs += segmentMs;
+      }
+
+      bucket.appDurations[appName] =
+        (bucket.appDurations[appName] || 0) + segmentMs;
+
+      bucket.categoryDurations[category] =
+        (bucket.categoryDurations[category] || 0) + segmentMs;
+
+      bucket.intentDurations[intent] =
+        (bucket.intentDurations[intent] || 0) + segmentMs;
 
       current = segmentEnd;
     }
   }
 
-  const finalHeatmap: Record<string, Record<number, number>> = {};
+  const getDominantKey = (values: Record<string, number>) => {
+    const [key] =
+      Object.entries(values).sort((a, b) => b[1] - a[1])[0] ?? [];
+
+    return key ?? null;
+  };
+
+  const getTopEntries = (values: Record<string, number>, totalMs: number) =>
+    Object.entries(values)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([name, duration]) => ({
+        name,
+        duration,
+        minutes: Number((duration / 60000).toFixed(1)),
+        percentage:
+          totalMs > 0
+            ? Number(((duration / totalMs) * 100).toFixed(1))
+            : 0
+      }));
+
+  const finalHeatmap: Record<string, Record<number, any>> = {};
 
   Object.entries(heatmap).forEach(([date, hours]) => {
     finalHeatmap[date] = {};
 
     Object.entries(hours).forEach(([hour, data]) => {
-      finalHeatmap[date][Number(hour)] =
+      const productivity =
         data.totalMs > 0
           ? Number((data.totalProductivity / data.totalMs).toFixed(2))
           : 0;
+
+      finalHeatmap[date][Number(hour)] = {
+        score: productivity,
+        productivity,
+        duration: data.totalMs,
+        trackedMinutes: Number((data.totalMs / 60000).toFixed(1)),
+        idleMinutes: Number((data.idleMs / 60000).toFixed(1)),
+        dominantApp: getDominantKey(data.appDurations),
+        dominantCategory: getDominantKey(data.categoryDurations),
+        dominantIntent: getDominantKey(data.intentDurations),
+        topApps: getTopEntries(data.appDurations, data.totalMs),
+        categoryBreakdown: getTopEntries(
+          data.categoryDurations,
+          data.totalMs
+        ),
+        intentBreakdown: getTopEntries(data.intentDurations, data.totalMs)
+      };
     });
   });
 

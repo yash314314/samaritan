@@ -1,6 +1,7 @@
 import express from 'express';
 import activityRoutes from './routes/activity';
 import analyticsRoutes from './routes/analytics';
+import focusRoutes from './routes/focus';
 import cors from 'cors';
 
 
@@ -21,3 +22,4 @@ app.use('/analytics', analyticsRoutes);
 app.listen(4000, () => {
   console.log("API running on http://localhost:4000");
 });
+app.use('/focus', focusRoutes);

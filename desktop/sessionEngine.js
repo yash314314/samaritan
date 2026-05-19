@@ -1,4 +1,4 @@
-const { app } = require("electron");
+const { app, Notification } = require("electron");
 
 let currentSession = null;
 
@@ -78,6 +78,34 @@ async function sendSessionToBackend(session) {
     }
 
     console.log("[Samaritan] Transmission acknowledged by backend.");
+
+    try {
+      const data = JSON.parse(text);
+      const focusIntervention = data?.focusIntervention;
+
+      if (focusIntervention) {
+        const appName =
+          focusIntervention.intervention?.appName || session.app;
+
+        console.log(
+          "[Samaritan] Strict focus intervention.",
+          "\n  Action:", focusIntervention.intervention?.action,
+          "\n  App:", appName,
+          "\n  Message:", focusIntervention.message
+        );
+
+        if (Notification.isSupported()) {
+          new Notification({
+            title: "Strict Focus",
+            body:
+              `${appName} is outside your focus protocol. ` +
+              "Return to the active deep work session."
+          }).show();
+        }
+      }
+    } catch {
+      // Backend returned a valid acknowledgement without JSON intervention data.
+    }
 
   } catch (err) {
 

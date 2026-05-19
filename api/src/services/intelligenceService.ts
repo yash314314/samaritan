@@ -491,7 +491,22 @@ function getISTParts(date: Date) {
     minute: ist.getUTCMinutes()
   };
 }
+function getWorkFocusImpact(activity: any) {
+  if (isIdleActivity(activity)) return 0;
 
+  const allowedCategories = new Set([
+    "deep_work",
+    "research",
+    "productivity",
+    "development_tools"
+  ]);
+
+  if (!allowedCategories.has(activity.category)) {
+    return 0;
+  }
+
+  return getBaseFocus(activity);
+}
 export async function getDailyFocusTrend(
   userId: string,
   date?: string,
@@ -545,9 +560,7 @@ export async function getDailyFocusTrend(
   });
 
   for (const activity of activities) {
-    const impact = isIdleActivity(activity)
-      ? 0
-      : getBaseFocus(activity);
+    const impact = getWorkFocusImpact(activity);
 
     const activityStart = new Date(activity.startTime).getTime();
     const recordedEnd =

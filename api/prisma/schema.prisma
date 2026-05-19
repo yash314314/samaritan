@@ -86,3 +86,38 @@ model AppPattern {
 
   @@index([appName])
 }
+model DeepWorkSession {
+  id              String   @id @default(uuid())
+  userId          String
+  goal            String?
+  plannedMinutes  Int
+  startedAt       DateTime @default(now())
+  endedAt         DateTime?
+  status          String   // active | completed | abandoned
+  enforcement     String   // observe | warn | require_reason | block
+
+  allowedApps     String[]
+  allowedDomains  String[]
+  blockedApps     String[]
+  blockedDomains  String[]
+
+  focusScore      Float    @default(0)
+  violationCount  Int      @default(0)
+  interruptionMs  Int      @default(0)
+  productiveMs    Int      @default(0)
+  distractionMs   Int      @default(0)
+
+  createdAt       DateTime @default(now())
+}
+
+model FocusIntervention {
+  id              String   @id @default(uuid())
+  deepWorkId      String
+  appName         String
+  domain          String?
+  windowTitle     String
+  detectedAt      DateTime @default(now())
+  action          String   // warned | reason_required | blocked | allowed_once
+  reason          String?
+  durationMs      Int?
+}
