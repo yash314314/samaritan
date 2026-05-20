@@ -165,6 +165,7 @@ export async function startDeepWorkSession(input: StrictFocusInput) {
     data: {
       userId: input.userId,
       goal: input.goal ?? null,
+      status: "active",
       plannedMinutes: Math.max(1, Math.floor(input.plannedMinutes)),
       enforcement: input.enforcement ?? "require_reason",
       allowedApps: input.allowedApps ?? [],
@@ -321,12 +322,11 @@ export async function evaluateDeepWorkActivity(
 
   const intervention = await prisma.focusIntervention.create({
     data: {
-      deepWorkSessionId: session.id,
+      deepWorkId: session.id,
       appName: activity.appName,
       domain: activity.domain ?? null,
       windowTitle: activity.windowTitle,
       action: interventionAction(session.enforcement),
-      severity: result.severity,
       durationMs: duration
     }
   });

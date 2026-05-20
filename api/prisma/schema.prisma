@@ -106,18 +106,28 @@ model DeepWorkSession {
   interruptionMs  Int      @default(0)
   productiveMs    Int      @default(0)
   distractionMs   Int      @default(0)
-
+  idleMs          Int      @default(0)
+  productivityScore Float @default(0)
+  interventions   FocusIntervention[]
   createdAt       DateTime @default(now())
 }
 
 model FocusIntervention {
   id              String   @id @default(uuid())
+
   deepWorkId      String
+
+  deepWork        DeepWorkSession @relation(fields: [deepWorkId], references: [id])
+
   appName         String
   domain          String?
   windowTitle     String
+
   detectedAt      DateTime @default(now())
-  action          String   // warned | reason_required | blocked | allowed_once
+
+  action          String
   reason          String?
   durationMs      Int?
+    @@index([deepWorkId])
+  @@index([detectedAt])
 }
