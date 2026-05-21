@@ -6,7 +6,7 @@ import {
   resolveFocusIntervention,
   startDeepWorkSession
 } from "../services/deepWorkService";
-
+import { getDeepWorkSessionResult } from "../services/deepWorkService";
 const router = Router();
 
 router.get("/active", async (req, res) => {
@@ -107,5 +107,64 @@ router.post("/interventions/:id/resolve", async (req, res) => {
     res.status(500).json({ error: "Failed to resolve intervention" });
   }
 });
+router.get("/:id/result", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.query;
 
+    if (!userId || typeof userId !== "string") {
+      return res.status(400).json({ error: "Missing userId" });
+    }
+
+    const result = await getDeepWorkSessionResult(id, userId);
+    
+    if (!result) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error("Get session result failed:", error);
+    res.status(500).json({ error: "Failed to get session result" });
+  }
+});
+router.get("/active/status", async (req, res) => {
+  try {
+    const { userId } = req.query;
+
+    if (!userId || typeof userId !== "string") {
+      return res.status(400).json({ error: "Missing userId" });
+    }
+
+    const session = await getActiveDeepWorkSession(userId);
+    
+    if (!session) {
+      return res.json({ active: false });
+    }
+
+    const now = new Date();
+    const elapsedMinutes = Math.floor(
+      (now.getTime() - session.startedAt.getTime()) / (60 * 1000)
+    );
+    const remainingMinutes = Math.max(0, session.plannedMinutes - elapsedMinutes);
+
+    res.json({
+      active: true,
+      session: {
+        id: session.id,
+        goal: session.goal,
+        plannedMinutes: session.plannedMinutes,
+        elapsedMinutes,
+        remainingMinutes,
+        enforcement: session.enforcement,
+        focusScore: Number(session.focusScore.toFixed(2)),
+        productivityScore: Number(session.productivityScore.toFixed(2)),
+        violationCount: session.violationCount
+      }
+    });
+  } catch (error) {
+    console.error("Get active status failed:", error);
+    res.status(500).json({ error: "Failed to get active status" });
+  }
+});
 export default router;

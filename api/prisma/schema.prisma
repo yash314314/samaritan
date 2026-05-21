@@ -109,6 +109,7 @@ model DeepWorkSession {
   idleMs          Int      @default(0)
   productivityScore Float @default(0)
   interventions   FocusIntervention[]
+  minuteLogs      DeepWorkMinuteLog[]
   createdAt       DateTime @default(now())
 }
 
@@ -130,4 +131,32 @@ model FocusIntervention {
   durationMs      Int?
     @@index([deepWorkId])
   @@index([detectedAt])
+}
+model DeepWorkMinuteLog {
+  id            String   @id @default(uuid())
+  deepWorkId    String
+  deepWork      DeepWorkSession @relation(fields: [deepWorkId], references: [id], onDelete: Cascade)
+  
+  minuteIndex   Int      // 0, 1, 2, 3... relative to session start
+  timestamp     DateTime @default(now())
+  
+  // Metrics at this minute
+  focusScore        Float @default(0)
+  productivityScore Float @default(0)
+  
+  // Flags
+  distractionFlag   Boolean @default(false)
+  idleFlag          Boolean @default(false)
+  
+  // Context snapshot
+  appName       String?
+  windowTitle   String?
+  category      String?
+  intent        String?
+  
+  createdAt     DateTime @default(now())
+  
+  @@index([deepWorkId])
+  @@index([minuteIndex])
+  @@index([timestamp])
 }

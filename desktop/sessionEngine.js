@@ -1,4 +1,4 @@
-const { app, Notification } = require("electron");
+const { app, Notification, BrowserWindow } = require("electron");
 
 let currentSession = null;
 
@@ -38,7 +38,6 @@ function startNewSession(event) {
 /* ---------------- SEND TO BACKEND ---------------- */
 
 async function sendSessionToBackend(session) {
-
   const payload = {
     userId: USER_ID,
     app: session.app,
@@ -56,7 +55,6 @@ async function sendSessionToBackend(session) {
   console.log("[Samaritan] Payload:", JSON.stringify(payload, null, 2));
 
   try {
-
     const response = await fetch(BACKEND_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -66,15 +64,12 @@ async function sendSessionToBackend(session) {
     const text = await response.text();
 
     if (!response.ok) {
-
       console.error(
         "[Samaritan] Backend rejected the observation.",
         "\n  Status:", response.status,
         "\n  Response:", text
       );
-
       return;
-
     }
 
     console.log("[Samaritan] Transmission acknowledged by backend.");
@@ -94,26 +89,79 @@ async function sendSessionToBackend(session) {
           "\n  Message:", focusIntervention.message
         );
 
-        if (Notification.isSupported()) {
-          new Notification({
-            title: "Strict Focus",
-            body:
-              `${appName} is outside your focus protocol. ` +
-              "Return to the active deep work session."
-          }).show();
-        }
+        handleIntervention(focusIntervention, appName);
       }
     } catch {
       // Backend returned a valid acknowledgement without JSON intervention data.
     }
 
   } catch (err) {
-
     console.error(
       "[Samaritan] Transmission failed.",
       "\n  Error:", err.message
     );
+  }
+}
 
+/* ---------- INTERVENTION HANDLER ---------- */
+
+function handleIntervention(focusIntervention, appName) {
+  const { intervention, enforcement, message } = focusIntervention;
+  const action = intervention?.action || enforcement || "observe";
+
+  if (action === "blocked" || action === "block") {
+    // BLOCK: Show critical notification + attempt to close/minimize window
+    if (Notification.isSupported()) {
+      new Notification({
+        title: "🚫 Focus Blocked",
+        body: `${appName} is blocked during deep work.\n${message}`,
+        urgency: "critical"
+      }).show();
+    }
+
+    // Attempt to block the window (Electron power)
+    blockDistractingWindow(appName);
+
+  } else if (action === "warned" || action === "warn") {
+    // WARN: Show warning notification
+    if (Notification.isSupported()) {
+      new Notification({
+        title: "⚠️ Focus Warning",
+        body: `${appName} is outside your focus protocol.\n${message}`,
+        urgency: "normal"
+      }).show();
+    }
+
+  } else if (action === "observed" || action === "observe") {
+    // OBSERVE: Silent log only, no notification
+    console.log("[Samaritan] Observation logged (no enforcement):", message);
+
+  } else if (action === "reason_required") {
+    // REASON REQUIRED: Show notification asking for justification
+    if (Notification.isSupported()) {
+      new Notification({
+        title: "📝 Justification Required",
+        body: `${appName} requires a reason to continue.\n${message}`,
+        urgency: "normal"
+      }).show();
+    }
+  }
+}
+
+const { shell } = require("electron");
+
+function blockDistractingWindow(appName) {
+
+  
+  console.log(`[Samaritan] Attempting to block ${appName}...`);
+  
+  // Strategy 1: Show a blocking overlay in our own app
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win) {
+    win.webContents.send("focus-blocked", {
+      appName,
+      message: "This app is blocked during your deep work session."
+    });
   }
 
 }
